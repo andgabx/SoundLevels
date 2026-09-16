@@ -262,14 +262,20 @@ public final class CoreAudioSessionService: AudioSessionProviding {
     // MARK: - Control (FR-003/FR-004 — see KNOWN LIMITATION above)
 
     public func setVolume(_ volume: Double, forBundleIdentifier id: String) {
-        guard var session = sessionsSubject.value.first(where: { $0.bundleIdentifier == id }), session.isControllable else { return }
+        guard var session = sessionsSubject.value.first(where: { $0.bundleIdentifier == id }), session.isControllable else {
+            print("[AudioMixer] setVolume(\(volume), \(id)): no controllable session found, ignoring")
+            return
+        }
         session.setVolume(volume)
         applyMuteBehavior(session.isMuted, forIdentity: id)
         publish(session)
     }
 
     public func setMuted(_ isMuted: Bool, forBundleIdentifier id: String) {
-        guard var session = sessionsSubject.value.first(where: { $0.bundleIdentifier == id }), session.isControllable else { return }
+        guard var session = sessionsSubject.value.first(where: { $0.bundleIdentifier == id }), session.isControllable else {
+            print("[AudioMixer] setMuted(\(isMuted), \(id)): no controllable session found, ignoring")
+            return
+        }
         session.setMuted(isMuted)
         applyMuteBehavior(session.isMuted, forIdentity: id)
         publish(session)
@@ -300,13 +306,20 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         // (process-name-fallback) identities and identities with no known processes can't be
         // tapped for real.
         let objectIDs = processObjectIDsByIdentity[identity] ?? []
-        guard !identity.hasPrefix("process:"), !objectIDs.isEmpty else { return }
+        guard !identity.hasPrefix("process:"), !objectIDs.isEmpty else {
+            print("[AudioMixer] applyMuteBehavior(\(muted), \(identity)): no process object IDs known — skipping tap")
+            return
+        }
 
         let description = CATapDescription(stereoMixdownOfProcesses: objectIDs)
         description.muteBehavior = muted ? .muted : .unmuted
         var tapID: AudioObjectID = 0
-        if AudioHardwareCreateProcessTap(description, &tapID) == noErr {
+        let status = AudioHardwareCreateProcessTap(description, &tapID)
+        if status == noErr {
             activeTaps[identity] = tapID
+            print("[AudioMixer] applyMuteBehavior(\(muted), \(identity)): tap \(tapID) created for objectIDs \(objectIDs)")
+        } else {
+            print("[AudioMixer] applyMuteBehavior(\(muted), \(identity)): AudioHardwareCreateProcessTap FAILED, status=\(status) for objectIDs \(objectIDs)")
         }
     }
 }
