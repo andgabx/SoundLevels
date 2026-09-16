@@ -10,21 +10,31 @@ import AppKit
 /// Real Core Audio backend for `AudioSessionProviding`, built on the public Process Tap API
 /// (macOS 14.4+, research.md §1). Not unit-tested — real hardware/permission dialogs aren't
 /// practical to simulate — validated manually via quickstart.md instead.
-///
-/// KNOWN LIMITATION: mute is real (see `LiveMutePipeline` below), but there is still no public
-/// API for continuous per-process gain — only "silent" (muted) vs. "audible" (unmuted). True
-/// continuous scaling would require the IOProc below to actually read the tap's captured samples,
-/// scale them, and write them into `outOutputData` instead of leaving it silent. That's the next
-/// step (and a good Obsidian mini-course topic).
 public final class CoreAudioSessionService: AudioSessionProviding {
-    /// The tap + private Aggregate Device + running IOProc that make a mute actually audible.
-    /// Manual testing (2026-09-16) confirmed a `CATapDescription.muteBehavior` has NO audible
-    /// effect until the tap is part of a live IO cycle — Core Audio only enforces it once the
-    /// tap is actually running inside an Aggregate Device.
-    private struct LiveMutePipeline {
+    /// The tap + private Aggregate Device (tap + real output sub-device) + running IOProc that
+    /// makes both mute AND continuous volume audible. Manual testing (2026-09-16) confirmed
+    /// `CATapDescription.muteBehavior` alone has NO audible effect until the tap is part of a
+    /// live IO cycle — Core Audio only enforces it once the tap is actually running inside an
+    /// Aggregate Device. To get continuous gain (not just mute), the tap is always set `.muted`
+    /// once this pipeline exists (stopping the app's direct passthrough to hardware entirely),
+    /// and the IOProc itself reads the tap's captured samples, scales them by `box.volume`
+    /// (silence if `box.isMuted`), and writes the result to the real output device included in
+    /// the same aggregate — making this pipeline the sole path by which that app's audio reaches
+    /// the speakers while it's active.
+    private final class VolumeBox {
+        var volume: Double
+        var isMuted: Bool
+        init(volume: Double, isMuted: Bool) {
+            self.volume = volume
+            self.isMuted = isMuted
+        }
+    }
+
+    private struct LiveControlPipeline {
         let tapID: AudioObjectID
         let aggregateDeviceID: AudioObjectID
         let ioProcID: AudioDeviceIOProcID
+        let box: VolumeBox
     }
 
     private let permissionSubject = CurrentValueSubject<PermissionState, Never>(.notDetermined)
@@ -34,7 +44,7 @@ public final class CoreAudioSessionService: AudioSessionProviding {
     private var pollTimer: Timer?
     /// The live mute pipeline per session identity — only exists while that session is actually
     /// muted; unmuted sessions need no pipeline at all (natural passthrough).
-    private var livePipelines: [String: LiveMutePipeline] = [:]
+    private var livePipelines: [String: LiveControlPipeline] = [:]
     /// Real Core Audio process object IDs currently grouped under each session identity (T034) —
     /// what the mute pipeline must tap, instead of an empty process list.
     private var processObjectIDsByIdentity: [String: [AudioObjectID]] = [:]
@@ -265,7 +275,7 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         return value as String?
     }
 
-    // MARK: - Control (FR-003/FR-004 — see KNOWN LIMITATION above)
+    // MARK: - Control (FR-003/FR-004)
 
     public func setVolume(_ volume: Double, forBundleIdentifier id: String) {
         guard var session = sessionsSubject.value.first(where: { $0.bundleIdentifier == id }), session.isControllable else {
@@ -273,7 +283,7 @@ public final class CoreAudioSessionService: AudioSessionProviding {
             return
         }
         session.setVolume(volume)
-        applyMuteBehavior(session.isMuted, forIdentity: id)
+        applyControl(volume: session.volume, isMuted: session.isMuted, forIdentity: id)
         publish(session)
     }
 
@@ -283,7 +293,7 @@ public final class CoreAudioSessionService: AudioSessionProviding {
             return
         }
         session.setMuted(isMuted)
-        applyMuteBehavior(session.isMuted, forIdentity: id)
+        applyControl(volume: session.volume, isMuted: session.isMuted, forIdentity: id)
         publish(session)
     }
 
@@ -299,36 +309,61 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         sessionsSubject.value = current
     }
 
-    private func applyMuteBehavior(_ muted: Bool, forIdentity identity: String) {
+    /// Routes an app's audio through our own live pipeline whenever it needs anything other than
+    /// its natural, unmodified volume — silence if muted, `volume`-scaled samples otherwise.
+    /// Tears the pipeline down entirely once back at natural (unmuted, volume 1.0) so an
+    /// untouched app's audio needs no interception at all.
+    private func applyControl(volume: Double, isMuted: Bool, forIdentity identity: String) {
         guard #available(macOS 14.4, *) else { return }
 
-        guard muted else {
-            // Unmuted = natural passthrough; no live pipeline needed at all.
+        let needsPipeline = isMuted || volume < 1.0
+        guard needsPipeline else {
             if let pipeline = livePipelines.removeValue(forKey: identity) {
                 Self.tearDown(pipeline)
-                print("[AudioMixer] \(identity): unmuted, live pipeline torn down")
+                print("[AudioMixer] \(identity): back to natural volume, live pipeline torn down")
             }
             return
         }
 
-        // Already muted live — avoid rebuilding on every redundant call (e.g. repeated setVolume(0)).
-        guard livePipelines[identity] == nil else { return }
-
-        let objectIDs = processObjectIDsByIdentity[identity] ?? []
-        guard !identity.hasPrefix("process:"), !objectIDs.isEmpty else {
-            print("[AudioMixer] \(identity): no process object IDs known — skipping mute pipeline")
+        if let existing = livePipelines[identity] {
+            existing.box.volume = volume
+            existing.box.isMuted = isMuted
             return
         }
 
-        guard let pipeline = Self.startLiveMutePipeline(forIdentity: identity, objectIDs: objectIDs) else { return }
+        let objectIDs = processObjectIDsByIdentity[identity] ?? []
+        guard !identity.hasPrefix("process:"), !objectIDs.isEmpty else {
+            print("[AudioMixer] \(identity): no process object IDs known — skipping control pipeline")
+            return
+        }
+
+        guard let pipeline = Self.startLiveControlPipeline(
+            forIdentity: identity,
+            objectIDs: objectIDs,
+            initialVolume: volume,
+            initialMuted: isMuted
+        ) else { return }
         livePipelines[identity] = pipeline
-        print("[AudioMixer] \(identity): live mute pipeline started (tap \(pipeline.tapID), aggregate \(pipeline.aggregateDeviceID))")
+        print("[AudioMixer] \(identity): live control pipeline started (tap \(pipeline.tapID), aggregate \(pipeline.aggregateDeviceID))")
     }
 
-    /// Builds a tap, wraps it in a private Aggregate Device, and starts a no-op `AudioDeviceIOProc`
-    /// on it — the minimum needed for Core Audio to actually enforce `CATapMuted` (see class doc).
+    /// Builds a tap (always `.muted`, since this pipeline becomes the sole path to the speakers
+    /// once it exists), wraps it in a private Aggregate Device alongside the real default output
+    /// device, and starts an `AudioDeviceIOProc` that scales the tap's captured samples by
+    /// `box.volume` and writes them to that real device — this is what makes both mute AND
+    /// continuous volume audible (see class doc).
     @available(macOS 14.4, *)
-    private static func startLiveMutePipeline(forIdentity identity: String, objectIDs: [AudioObjectID]) -> LiveMutePipeline? {
+    private static func startLiveControlPipeline(
+        forIdentity identity: String,
+        objectIDs: [AudioObjectID],
+        initialVolume: Double,
+        initialMuted: Bool
+    ) -> LiveControlPipeline? {
+        guard let outputDeviceUID = Self.defaultOutputDeviceUID() else {
+            print("[AudioMixer] \(identity): couldn't resolve the default output device UID")
+            return nil
+        }
+
         let tapUUID = UUID()
         let description = CATapDescription(stereoMixdownOfProcesses: objectIDs)
         description.uuid = tapUUID
@@ -346,6 +381,10 @@ public final class CoreAudioSessionService: AudioSessionProviding {
             kAudioAggregateDeviceUIDKey: UUID().uuidString,
             kAudioAggregateDeviceIsPrivateKey: true,
             kAudioAggregateDeviceTapAutoStartKey: true,
+            kAudioAggregateDeviceMainSubDeviceKey: outputDeviceUID,
+            kAudioAggregateDeviceSubDeviceListKey: [
+                [kAudioSubDeviceUIDKey: outputDeviceUID]
+            ],
             kAudioAggregateDeviceTapListKey: [
                 [kAudioSubTapUIDKey: tapUUID.uuidString]
             ]
@@ -358,9 +397,35 @@ public final class CoreAudioSessionService: AudioSessionProviding {
             return nil
         }
 
+        // Defensive: only attempt sample-accurate scaling if the tap's format is exactly what we
+        // expect (Linear PCM, Float32). If it's anything else, fall back to silence rather than
+        // risk writing garbage/loud noise from a misinterpreted buffer.
+        let tapFormat = Self.tapStreamFormat(tapID)
+        let canScaleSamples = tapFormat?.mFormatID == kAudioFormatLinearPCM
+            && (tapFormat?.mFormatFlags ?? 0) & kAudioFormatFlagIsFloat != 0
+            && tapFormat?.mBitsPerChannel == 32
+        if !canScaleSamples {
+            print("[AudioMixer] \(identity): tap format isn't Float32 PCM (\(String(describing: tapFormat))) — muting only, no gain scaling")
+        }
+
+        let box = VolumeBox(volume: initialVolume, isMuted: initialMuted)
+
         var ioProcID: AudioDeviceIOProcID?
-        let ioStatus = AudioDeviceCreateIOProcIDWithBlock(&ioProcID, aggregateDeviceID, nil) { _, _, _, _, _ in
-            // No-op: merely running IO is what makes Core Audio enforce this tap's muteBehavior.
+        let ioStatus = AudioDeviceCreateIOProcIDWithBlock(&ioProcID, aggregateDeviceID, nil) { _, inInputData, _, outOutputData, _ in
+            guard canScaleSamples else { return }
+            let muted = box.isMuted
+            let gain = Float(max(0.0, min(1.0, box.volume)))
+            let inputBuffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inInputData))
+            let outputBuffers = UnsafeMutableAudioBufferListPointer(outOutputData)
+            for i in 0..<min(inputBuffers.count, outputBuffers.count) {
+                guard let inData = inputBuffers[i].mData, let outData = outputBuffers[i].mData else { continue }
+                let sampleCount = min(inputBuffers[i].mDataByteSize, outputBuffers[i].mDataByteSize) / 4
+                let input = inData.assumingMemoryBound(to: Float.self)
+                let output = outData.assumingMemoryBound(to: Float.self)
+                for sample in 0..<Int(sampleCount) {
+                    output[sample] = muted ? 0 : input[sample] * gain
+                }
+            }
         }
         guard ioStatus == noErr, let ioProcID else {
             print("[AudioMixer] \(identity): AudioDeviceCreateIOProcIDWithBlock failed, status=\(ioStatus)")
@@ -378,15 +443,41 @@ public final class CoreAudioSessionService: AudioSessionProviding {
             return nil
         }
 
-        return LiveMutePipeline(tapID: tapID, aggregateDeviceID: aggregateDeviceID, ioProcID: ioProcID)
+        return LiveControlPipeline(tapID: tapID, aggregateDeviceID: aggregateDeviceID, ioProcID: ioProcID, box: box)
     }
 
     @available(macOS 14.4, *)
-    private static func tearDown(_ pipeline: LiveMutePipeline?) {
+    private static func tearDown(_ pipeline: LiveControlPipeline?) {
         guard let pipeline else { return }
         AudioDeviceStop(pipeline.aggregateDeviceID, pipeline.ioProcID)
         AudioDeviceDestroyIOProcID(pipeline.aggregateDeviceID, pipeline.ioProcID)
         AudioHardwareDestroyAggregateDevice(pipeline.aggregateDeviceID)
         AudioHardwareDestroyProcessTap(pipeline.tapID)
+    }
+
+    private static func defaultOutputDeviceUID() -> String? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceID: AudioObjectID = 0
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID) == noErr else {
+            return nil
+        }
+        return Self.stringProperty(deviceID, kAudioDevicePropertyDeviceUID)
+    }
+
+    private static func tapStreamFormat(_ tapID: AudioObjectID) -> AudioStreamBasicDescription? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioTapPropertyFormat,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var format = AudioStreamBasicDescription()
+        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        guard AudioObjectGetPropertyData(tapID, &address, 0, nil, &size, &format) == noErr else { return nil }
+        return format
     }
 }
