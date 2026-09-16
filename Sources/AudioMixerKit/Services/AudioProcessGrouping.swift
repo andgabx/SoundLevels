@@ -49,7 +49,7 @@ public enum AudioProcessGrouping {
             byIdentity[identity(for: process), default: []].append(process)
         }
 
-        return byIdentity.map { identity, group in
+        let sessions = byIdentity.map { identity, group -> ControllableAudioSession in
             let representative = group[0]
             if var known = existing[identity] {
                 known.lastSeenAt = Date()
@@ -61,6 +61,14 @@ public enum AudioProcessGrouping {
                 displayName: displayName,
                 isControllable: representative.bundleIdentifier != nil
             )
+        }
+
+        // Dictionary iteration order is not stable across calls — without sorting, the popover's
+        // row order would visibly shuffle on every poll cycle even when nothing changed.
+        return sessions.sorted { lhs, rhs in
+            lhs.displayName == rhs.displayName
+                ? lhs.bundleIdentifier < rhs.bundleIdentifier
+                : lhs.displayName < rhs.displayName
         }
     }
 

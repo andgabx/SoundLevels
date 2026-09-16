@@ -2,6 +2,7 @@ import Combine
 import CoreAudio
 import AudioToolbox
 import Foundation
+import Darwin
 #if canImport(AppKit)
 import AppKit
 #endif
@@ -10,13 +11,15 @@ import AppKit
 /// (macOS 14.4+, research.md §1). Not unit-tested — real hardware/permission dialogs aren't
 /// practical to simulate — validated manually via quickstart.md instead.
 ///
-/// KNOWN LIMITATION (flag for manual follow-up): `setVolume` only distinguishes "silent" (0) from
-/// "audible" (>0) via the tap's `CATapMuteBehavior` — there is no public API for continuous
-/// per-process gain. True continuous scaling would require building an Aggregate Device that
-/// re-mixes each tap's captured samples (scaled by volume) into the real output device via an
-/// `AudioDeviceIOProc`. That render pipeline is NOT implemented here: it needs iterative testing
-/// against real audio hardware that isn't available in this environment. This is the top
-/// candidate for your next hands-on Core Audio session (and a good Obsidian mini-course topic).
+/// KNOWN LIMITATION (confirmed via manual testing 2026-09-16): `setVolume`/`setMuted` only build a
+/// `CATapDescription` with the desired `CATapMuteBehavior` — they never attach that tap to a
+/// running Aggregate Device / `AudioDeviceIOProc`. Manual testing confirmed a tap that is never
+/// actually pulled into a live IO cycle does NOT audibly mute the target process — Core Audio
+/// appears to only enforce mute/gain on taps that are part of an active audio graph. Continuous
+/// volume AND real mute both need the same fix: build an Aggregate Device around the tap, start
+/// real IO on it (even if just to discard/re-mix the samples), and keep it running for as long as
+/// the app should be controllable. This is the top candidate for your next hands-on Core Audio
+/// session (and a good Obsidian mini-course topic).
 public final class CoreAudioSessionService: AudioSessionProviding {
     private let permissionSubject = CurrentValueSubject<PermissionState, Never>(.notDetermined)
     private let sessionsSubject = CurrentValueSubject<[ControllableAudioSession], Never>([])
@@ -140,14 +143,19 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         return processIDs.compactMap { processObjectID -> RawAudioProcess? in
             guard Self.boolProperty(processObjectID, kAudioProcessPropertyIsRunningOutput) else { return nil }
             let pid = Self.pidProperty(processObjectID, kAudioProcessPropertyPID)
-            let bundleID = Self.stringProperty(processObjectID, kAudioProcessPropertyBundleID)
-            let displayName = bundleID.flatMap(Self.applicationName(forBundleIdentifier:))
-            let processName = displayName ?? bundleID ?? "pid:\(pid)"
+            let rawBundleID = Self.stringProperty(processObjectID, kAudioProcessPropertyBundleID)
+            // Multi-process apps (e.g. Chrome) report a DIFFERENT bundle ID per helper process
+            // (confirmed via manual testing: "Google Chrome Helper" showed up as its own row,
+            // separate from Chrome). Walk the process tree to find the actual owning application
+            // so FR-002's "one row per app" grouping holds for these helpers too.
+            let ownerBundleID = Self.ownerApplicationBundleIdentifier(forPID: pid) ?? rawBundleID
+            let displayName = ownerBundleID.flatMap(Self.applicationName(forBundleIdentifier:))
+                ?? Self.friendlyFallbackName(fromBundleIdentifier: rawBundleID, processID: pid)
             return RawAudioProcess(
                 processObjectID: processObjectID,
                 processID: pid,
-                bundleIdentifier: bundleID,
-                processName: processName,
+                bundleIdentifier: ownerBundleID,
+                processName: displayName,
                 displayName: displayName
             )
         }
@@ -165,6 +173,49 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         AudioHardwareDestroyProcessTap(tapID)
         return true
     }
+
+    /// A readable fallback when no app bundle can be resolved at all (e.g. system helper
+    /// processes like `com.apple.WebKit.GPU`) — the last one or two bundle ID components read
+    /// better than the raw reverse-DNS string.
+    private static func friendlyFallbackName(fromBundleIdentifier bundleID: String?, processID: pid_t) -> String {
+        guard let bundleID, !bundleID.isEmpty else { return "pid:\(processID)" }
+        let tail = bundleID.split(separator: ".").suffix(2).joined(separator: " ")
+        return tail.isEmpty ? bundleID : tail
+    }
+
+    #if canImport(AppKit)
+    /// Walks the process tree from `pid` up to the first ancestor that `NSWorkspace` recognizes
+    /// as a running application, returning its bundle identifier. Handles multi-process apps
+    /// (Chrome, Electron apps, etc.) whose helper processes report their own bundle ID to Core
+    /// Audio instead of their parent app's.
+    private static func ownerApplicationBundleIdentifier(forPID pid: pid_t) -> String? {
+        let runningApps = NSWorkspace.shared.runningApplications
+        var currentPID = pid
+        var visited = Set<pid_t>()
+        for _ in 0..<10 {
+            if let app = runningApps.first(where: { $0.processIdentifier == currentPID }) {
+                return app.bundleIdentifier
+            }
+            guard visited.insert(currentPID).inserted,
+                  let parentPID = Self.parentProcessID(of: currentPID),
+                  parentPID > 1, parentPID != currentPID
+            else { break }
+            currentPID = parentPID
+        }
+        return nil
+    }
+
+    private static func parentProcessID(of pid: pid_t) -> pid_t? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        let result = sysctl(&mib, u_int(mib.count), &info, &size, nil, 0)
+        guard result == 0 else { return nil }
+        return info.kp_eproc.e_ppid
+    }
+    #else
+    private static func ownerApplicationBundleIdentifier(forPID pid: pid_t) -> String? { nil }
+    #endif
 
     #if canImport(AppKit)
     private static func applicationName(forBundleIdentifier bundleID: String) -> String? {

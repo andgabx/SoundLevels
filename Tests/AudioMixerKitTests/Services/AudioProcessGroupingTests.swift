@@ -53,4 +53,19 @@ final class AudioProcessGroupingTests: XCTestCase {
 
         XCTAssertEqual(sessions.first?.volume, 0.3)
     }
+
+    func testOutputOrderIsDeterministicRegardlessOfInputOrder() {
+        let chrome = RawAudioProcess(processID: 2, bundleIdentifier: "com.google.Chrome", processName: "Google Chrome")
+        let music = RawAudioProcess(processID: 1, bundleIdentifier: "com.apple.Music", processName: "Music")
+        let spotify = RawAudioProcess(processID: 3, bundleIdentifier: "com.spotify.client", processName: "Spotify")
+
+        let first = AudioProcessGrouping.group(processes: [chrome, music, spotify]).map(\.bundleIdentifier)
+        let second = AudioProcessGrouping.group(processes: [spotify, chrome, music]).map(\.bundleIdentifier)
+        let third = AudioProcessGrouping.group(processes: [music, spotify, chrome]).map(\.bundleIdentifier)
+
+        let expected = ["com.google.Chrome", "com.apple.Music", "com.spotify.client"]
+        XCTAssertEqual(first, expected, "sorted by displayName: Google Chrome, Music, Spotify")
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(second, third)
+    }
 }
