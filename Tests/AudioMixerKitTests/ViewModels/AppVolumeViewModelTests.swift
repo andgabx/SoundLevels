@@ -2,23 +2,22 @@ import XCTest
 @testable import AudioMixerKit
 
 final class AppVolumeViewModelTests: XCTestCase {
-    /// Also returns the `MixerViewModel` — it owns the Combine subscription that routes provider
-    /// updates back into the row view model, so callers MUST keep it alive for the test's scope.
+    /// Constructs the view model directly against the fake — no `MixerViewModel` involved.
+    /// T040: `AppVolumeViewModel` now subscribes to `provider.sessions` itself, so it no longer
+    /// depends on anything else being kept alive to keep receiving updates.
     private func makeViewModel(
         session: ControllableAudioSession,
         otherSessions: [ControllableAudioSession] = [],
         fake: FakeAudioSessionProvider? = nil
-    ) -> (AppVolumeViewModel, FakeAudioSessionProvider, MixerViewModel) {
+    ) -> (AppVolumeViewModel, FakeAudioSessionProvider) {
         let provider = fake ?? FakeAudioSessionProvider(permissionState: .granted, sessions: [session] + otherSessions)
-        let mixer = MixerViewModel(provider: provider)
-        let rowViewModel = mixer.rowViewModels.first(where: { $0.bundleIdentifier == session.bundleIdentifier })!
-        return (rowViewModel, provider, mixer)
+        let viewModel = AppVolumeViewModel(session: session, provider: provider)
+        return (viewModel, provider)
     }
 
     func testSetVolumeZeroSetsMuted() {
         let session = ControllableAudioSession(bundleIdentifier: "com.apple.Music", displayName: "Music", volume: 0.6)
-        let (viewModel, _, mixer) = makeViewModel(session: session)
-        _ = mixer
+        let (viewModel, _) = makeViewModel(session: session)
 
         viewModel.setVolume(0)
 
@@ -28,8 +27,7 @@ final class AppVolumeViewModelTests: XCTestCase {
 
     func testSetVolumeAboveZeroUnmutesAndUpdatesLastNonZeroVolume() {
         let session = ControllableAudioSession(bundleIdentifier: "com.apple.Music", displayName: "Music", volume: 0)
-        let (viewModel, _, mixer) = makeViewModel(session: session)
-        _ = mixer
+        let (viewModel, _) = makeViewModel(session: session)
 
         viewModel.setVolume(0.7)
 
@@ -40,8 +38,7 @@ final class AppVolumeViewModelTests: XCTestCase {
     func testSetVolumeAndSetMutedAreNoOpsWhenNotControllable() {
         var session = ControllableAudioSession(bundleIdentifier: "com.example.daemon", displayName: "daemon", volume: 0.5)
         session.isControllable = false
-        let (viewModel, fake, mixer) = makeViewModel(session: session)
-        _ = mixer
+        let (viewModel, fake) = makeViewModel(session: session)
 
         viewModel.setVolume(0.9)
         viewModel.toggleMute()
@@ -54,9 +51,8 @@ final class AppVolumeViewModelTests: XCTestCase {
         let music = ControllableAudioSession(bundleIdentifier: "com.apple.Music", displayName: "Music", volume: 0.5)
         let chrome = ControllableAudioSession(bundleIdentifier: "com.google.Chrome", displayName: "Chrome", volume: 0.5)
         let fake = FakeAudioSessionProvider(permissionState: .granted, sessions: [music, chrome])
-        let mixer = MixerViewModel(provider: fake)
-        let musicViewModel = mixer.rowViewModels.first(where: { $0.bundleIdentifier == "com.apple.Music" })!
-        let chromeViewModel = mixer.rowViewModels.first(where: { $0.bundleIdentifier == "com.google.Chrome" })!
+        let musicViewModel = AppVolumeViewModel(session: music, provider: fake)
+        let chromeViewModel = AppVolumeViewModel(session: chrome, provider: fake)
 
         musicViewModel.setVolume(0.1)
 
@@ -67,8 +63,7 @@ final class AppVolumeViewModelTests: XCTestCase {
 
     func testToggleMuteWhileVolumeAboveZeroPreservesVolumeAndSilencesAudio() {
         let session = ControllableAudioSession(bundleIdentifier: "com.apple.Music", displayName: "Music", volume: 0.6)
-        let (viewModel, _, mixer) = makeViewModel(session: session)
-        _ = mixer
+        let (viewModel, _) = makeViewModel(session: session)
 
         viewModel.toggleMute()
 
@@ -78,13 +73,24 @@ final class AppVolumeViewModelTests: XCTestCase {
 
     func testToggleMuteOffRestoresAudioAtTheUnchangedVolume() {
         let session = ControllableAudioSession(bundleIdentifier: "com.apple.Music", displayName: "Music", volume: 0.6)
-        let (viewModel, _, mixer) = makeViewModel(session: session)
-        _ = mixer
+        let (viewModel, _) = makeViewModel(session: session)
 
         viewModel.toggleMute() // mute on
         viewModel.toggleMute() // mute off
 
         XCTAssertFalse(viewModel.isMuted)
         XCTAssertEqual(viewModel.volume, 0.6)
+    }
+
+    func testUpdatesIndependentlyWithoutAnyMixerViewModelAlive() {
+        // T040's core guarantee: no MixerViewModel is ever constructed here, yet the row
+        // view model still reacts to provider changes on its own.
+        let session = ControllableAudioSession(bundleIdentifier: "com.apple.Music", displayName: "Music", volume: 0.5)
+        let fake = FakeAudioSessionProvider(permissionState: .granted, sessions: [session])
+        let viewModel = AppVolumeViewModel(session: session, provider: fake)
+
+        viewModel.setVolume(0.2)
+
+        XCTAssertEqual(viewModel.volume, 0.2)
     }
 }

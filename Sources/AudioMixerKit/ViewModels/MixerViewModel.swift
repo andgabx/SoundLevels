@@ -45,9 +45,11 @@ public final class MixerViewModel: ObservableObject {
 
     /// Rebuilds `rowViewModels` from the latest known state, reusing existing `AppVolumeViewModel`
     /// instances for bundle identifiers still present (US3, FR-005) so an in-flight slider drag
-    /// isn't reset, and dropping ones no longer present. While permission is `.denied`, sessions
-    /// are never read (contract expectation #1) — the list is cleared and `.permissionRequired`
-    /// is exposed instead (FR-010).
+    /// isn't reset, and dropping ones no longer present. Each `AppVolumeViewModel` updates its own
+    /// content independently (T040 — it subscribes to `provider.sessions` itself), so this method
+    /// only decides which instances should exist, never pushes content into them. While permission
+    /// is `.denied`, sessions are never read (contract expectation #1) — the list is cleared and
+    /// `.permissionRequired` is exposed instead (FR-010).
     private func recompute() {
         guard permissionState != .denied else {
             rowViewModels = []
@@ -61,7 +63,6 @@ public final class MixerViewModel: ObservableObject {
 
         for session in latestSessions {
             if let existing = rowViewModelsByIdentity[session.bundleIdentifier] {
-                existing.updateSession(session)
                 updated.append(existing)
                 updatedByIdentity[session.bundleIdentifier] = existing
             } else {
