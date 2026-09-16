@@ -133,7 +133,14 @@ public final class CoreAudioSessionService: AudioSessionProviding {
             grouped[index].isControllable = tappabilityByIdentity[identity] ?? false
         }
 
-        sessionsSubject.value = graceBuffer.apply(grouped)
+        let debounced = graceBuffer.apply(grouped)
+        sessionsSubject.value = debounced
+
+        // T045: without this, tappabilityByIdentity would grow forever across a long-running
+        // session touching many transient identities (e.g. many different websites' WebKit
+        // helpers) — each one probed once and then never forgotten.
+        let stillPresent = Set(debounced.map(\.bundleIdentifier))
+        tappabilityByIdentity = tappabilityByIdentity.filter { stillPresent.contains($0.key) }
     }
 
     // MARK: - Control (FR-003/FR-004)

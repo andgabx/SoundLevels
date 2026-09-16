@@ -72,11 +72,22 @@ enum AudioProcessDiscovery {
 
     /// A readable fallback when no app bundle can be resolved at all (e.g. system helper
     /// processes like `com.apple.WebKit.GPU`) — the last one or two bundle ID components read
-    /// better than the raw reverse-DNS string.
-    private static func friendlyFallbackName(fromBundleIdentifier bundleID: String?, processID: pid_t) -> String {
+    /// better than the raw reverse-DNS string. Pure/testable — see AudioProcessDiscoveryTests.
+    static func friendlyFallbackName(fromBundleIdentifier bundleID: String?, processID: pid_t) -> String {
         guard let bundleID, !bundleID.isEmpty else { return "pid:\(processID)" }
         let tail = bundleID.split(separator: ".").suffix(2).joined(separator: " ")
         return tail.isEmpty ? bundleID : tail
+    }
+
+    /// Finds the outermost `.app` bundle containing the given executable path — the FIRST
+    /// ".app/" is correct even when a helper's own nested `.app` lives inside it (e.g.
+    /// "Google Chrome.app/.../Google Chrome Helper.app/..."). Pure string logic, separated from
+    /// the `proc_pidpath` syscall in `enclosingAppBundleIdentifier` specifically so it's
+    /// unit-testable — see AudioProcessDiscoveryTests. This exact logic caused two real bugs
+    /// (Chrome Helper split into its own row; WebKit GPU unattributed) before being fixed.
+    static func appBundlePath(fromExecutablePath path: String) -> String? {
+        guard let appMarkerRange = path.range(of: ".app/") else { return nil }
+        return String(path[path.startIndex..<appMarkerRange.upperBound].dropLast())
     }
 
     #if canImport(AppKit)
@@ -116,10 +127,7 @@ enum AudioProcessDiscovery {
         let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
         guard length > 0 else { return nil }
         let path = String(cString: buffer)
-        // The FIRST ".app/" in the path is the outermost bundle — correct even when a helper's
-        // own nested .app lives inside it (e.g. "Google Chrome.app/.../Google Chrome Helper.app/...").
-        guard let appMarkerRange = path.range(of: ".app/") else { return nil }
-        let appPath = String(path[path.startIndex..<appMarkerRange.upperBound].dropLast())
+        guard let appPath = Self.appBundlePath(fromExecutablePath: path) else { return nil }
         return Bundle(path: appPath)?.bundleIdentifier
     }
 
