@@ -1,6 +1,7 @@
 # Spec Kit / Claude tooling — must never be committed (see .specify/memory/constitution.md)
 .specify/
 .claude/
+specs/
 
 # macOS
 .DS_Store
