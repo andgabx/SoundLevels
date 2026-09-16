@@ -35,6 +35,13 @@ public final class SessionGracePeriodBuffer {
         }
 
         buffered = result
-        return Array(result.values)
+        // Dictionary iteration order isn't stable — without sorting here too, the ordering fix in
+        // AudioProcessGrouping.group() would be undone every time this buffer is applied on top
+        // of it (confirmed via manual testing: rows kept reshuffling despite that earlier fix).
+        return result.values.sorted { lhs, rhs in
+            lhs.displayName == rhs.displayName
+                ? lhs.bundleIdentifier < rhs.bundleIdentifier
+                : lhs.displayName < rhs.displayName
+        }
     }
 }

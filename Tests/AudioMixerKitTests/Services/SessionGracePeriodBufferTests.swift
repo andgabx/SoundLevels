@@ -43,4 +43,20 @@ final class SessionGracePeriodBufferTests: XCTestCase {
 
         XCTAssertEqual(result.map(\.bundleIdentifier), ["com.apple.Music"])
     }
+
+    func testOutputOrderIsDeterministicRegardlessOfInputOrder() {
+        let buffer = SessionGracePeriodBuffer(gracePeriod: 3, now: Date.init)
+        let chrome = ControllableAudioSession(bundleIdentifier: "com.google.Chrome", displayName: "Google Chrome")
+        let music = ControllableAudioSession(bundleIdentifier: "com.apple.Music", displayName: "Music")
+        let spotify = ControllableAudioSession(bundleIdentifier: "com.spotify.client", displayName: "Spotify")
+
+        let first = buffer.apply([chrome, music, spotify]).map(\.bundleIdentifier)
+        let second = buffer.apply([spotify, chrome, music]).map(\.bundleIdentifier)
+        let third = buffer.apply([music, spotify, chrome]).map(\.bundleIdentifier)
+
+        let expected = ["com.google.Chrome", "com.apple.Music", "com.spotify.client"]
+        XCTAssertEqual(first, expected)
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(second, third)
+    }
 }
