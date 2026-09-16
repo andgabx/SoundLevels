@@ -52,12 +52,11 @@ final class MixerViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.listState, .permissionRequired)
     }
 
-    func testEmptySessionsWhilePermissionGrantedExposesEmptyStateDistinctFromLoading() {
+    func testEmptySessionsWhilePermissionGrantedExposesEmptyState() {
         let fake = FakeAudioSessionProvider(permissionState: .granted, sessions: [])
         let viewModel = MixerViewModel(provider: fake)
 
         XCTAssertEqual(viewModel.listState, .empty)
-        XCTAssertNotEqual(viewModel.listState, .loading)
     }
 
     func testSessionAdditionAndRemovalUpdateRowViewModelsWithoutExplicitRefresh() {

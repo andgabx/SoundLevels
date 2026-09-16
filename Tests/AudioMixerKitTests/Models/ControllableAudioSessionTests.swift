@@ -28,4 +28,14 @@ final class ControllableAudioSessionTests: XCTestCase {
         session.setVolume(0.3)
         XCTAssertFalse(session.isMuted)
     }
+
+    func testComparableSortsByDisplayNameThenBundleIdentifier() {
+        let chrome = ControllableAudioSession(bundleIdentifier: "com.google.Chrome", displayName: "Google Chrome")
+        let musicA = ControllableAudioSession(bundleIdentifier: "com.apple.Music.a", displayName: "Music")
+        let musicB = ControllableAudioSession(bundleIdentifier: "com.apple.Music.b", displayName: "Music")
+
+        let sorted = [chrome, musicB, musicA].sorted()
+
+        XCTAssertEqual(sorted.map(\.bundleIdentifier), ["com.google.Chrome", "com.apple.Music.a", "com.apple.Music.b"])
+    }
 }

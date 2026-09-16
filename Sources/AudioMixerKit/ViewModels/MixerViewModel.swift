@@ -4,7 +4,6 @@ import Combine
 /// `AppVolumeViewModel` per listed application (Constitution Principles I & II).
 public final class MixerViewModel: ObservableObject {
     public enum SessionListState: Equatable {
-        case loading
         case permissionRequired
         case empty
         case sessions
@@ -12,7 +11,10 @@ public final class MixerViewModel: ObservableObject {
 
     @Published public private(set) var permissionState: PermissionState = .notDetermined
     @Published public private(set) var rowViewModels: [AppVolumeViewModel] = []
-    @Published public private(set) var listState: SessionListState = .loading
+    // Both provider publishers are CurrentValueSubjects that replay synchronously on subscribe,
+    // so `recompute()` always runs before `init` returns — there is no separate "loading" moment
+    // any external observer could ever see. `.empty` is just a harmless initial value.
+    @Published public private(set) var listState: SessionListState = .empty
 
     private let provider: AudioSessionProviding
     private var cancellables = Set<AnyCancellable>()

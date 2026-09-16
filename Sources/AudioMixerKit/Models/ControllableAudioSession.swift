@@ -1,26 +1,21 @@
 import Foundation
-#if canImport(AppKit)
 import AppKit
-#endif
 
 /// Represents one running application currently producing (or very recently producing) audio,
 /// aggregating all of that application's audio-producing processes into a single controllable
 /// unit. See specs/001-per-app-volume-mixer/data-model.md.
-public struct ControllableAudioSession: Identifiable, Equatable {
+public struct ControllableAudioSession: Identifiable, Equatable, Comparable {
     public var id: String { bundleIdentifier }
 
     public let bundleIdentifier: String
     public var displayName: String
-    #if canImport(AppKit)
     public var icon: NSImage?
-    #endif
     public private(set) var volume: Double
     public private(set) var isMuted: Bool
     public var isControllable: Bool
     public private(set) var lastNonZeroVolume: Double
     public var lastSeenAt: Date
 
-    #if canImport(AppKit)
     public init(
         bundleIdentifier: String,
         displayName: String,
@@ -39,24 +34,6 @@ public struct ControllableAudioSession: Identifiable, Equatable {
         self.lastNonZeroVolume = clamped > 0 ? clamped : 1.0
         self.lastSeenAt = lastSeenAt
     }
-    #else
-    public init(
-        bundleIdentifier: String,
-        displayName: String,
-        volume: Double = 1.0,
-        isControllable: Bool = true,
-        lastSeenAt: Date = Date()
-    ) {
-        self.bundleIdentifier = bundleIdentifier
-        self.displayName = displayName
-        let clamped = ControllableAudioSession.clamp(volume)
-        self.volume = clamped
-        self.isMuted = clamped == 0
-        self.isControllable = isControllable
-        self.lastNonZeroVolume = clamped > 0 ? clamped : 1.0
-        self.lastSeenAt = lastSeenAt
-    }
-    #endif
 
     private static func clamp(_ value: Double) -> Double {
         min(max(value, 0.0), 1.0)
@@ -93,5 +70,16 @@ extension ControllableAudioSession {
             && lhs.isMuted == rhs.isMuted
             && lhs.isControllable == rhs.isControllable
             && lhs.lastNonZeroVolume == rhs.lastNonZeroVolume
+    }
+
+    /// Popover row order (FR-002/FR-005): alphabetically by display name, then by bundle
+    /// identifier as a stable tiebreak. Single source of truth — `AudioProcessGrouping` and
+    /// `SessionGracePeriodBuffer` both used to duplicate this comparator; one layer's ordering
+    /// fix was silently undone by the other's independent Dictionary→array conversion until both
+    /// were unified here.
+    public static func < (lhs: ControllableAudioSession, rhs: ControllableAudioSession) -> Bool {
+        lhs.displayName == rhs.displayName
+            ? lhs.bundleIdentifier < rhs.bundleIdentifier
+            : lhs.displayName < rhs.displayName
     }
 }

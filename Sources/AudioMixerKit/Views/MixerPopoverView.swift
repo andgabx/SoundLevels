@@ -15,9 +15,6 @@ public struct MixerPopoverView: View {
     public var body: some View {
         Group {
             switch viewModel.listState {
-            case .loading:
-                ProgressView()
-                    .padding(20)
             case .permissionRequired:
                 PermissionRequiredView(onOpenSystemSettings: onOpenSystemSettings)
             case .empty:

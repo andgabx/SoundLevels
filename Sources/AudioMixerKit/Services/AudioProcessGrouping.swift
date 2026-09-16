@@ -65,11 +65,9 @@ public enum AudioProcessGrouping {
 
         // Dictionary iteration order is not stable across calls — without sorting, the popover's
         // row order would visibly shuffle on every poll cycle even when nothing changed.
-        return sessions.sorted { lhs, rhs in
-            lhs.displayName == rhs.displayName
-                ? lhs.bundleIdentifier < rhs.bundleIdentifier
-                : lhs.displayName < rhs.displayName
-        }
+        // ControllableAudioSession's Comparable conformance is the single source of truth for
+        // row order (see its doc comment).
+        return sessions.sorted()
     }
 
     static func syntheticIdentity(forProcessName processName: String) -> String {
