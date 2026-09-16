@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.andersongabriel.AudioMixer</string>
+    <key>CFBundleName</key>
+    <string>AudioMixer</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.4</string>
+    <!-- Menu bar accessory only: no Dock icon, no app-switcher entry (FR-009, Constitution IV). -->
+    <key>LSUIElement</key>
+    <true/>
+    <!-- Shown by macOS the first time the app requests the Process Tap permission (FR-010). -->
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>AudioMixer needs this permission to show and control the volume of individual running applications.</string>
+</dict>
+</plist>

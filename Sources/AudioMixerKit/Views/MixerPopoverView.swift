@@ -1,0 +1,47 @@
+import SwiftUI
+
+/// Renders the menu bar popover: the session list, the empty state (FR-006), or
+/// `PermissionRequiredView` (FR-010) — driven entirely by `MixerViewModel`, no logic of its own
+/// (Constitution I).
+public struct MixerPopoverView: View {
+    @ObservedObject var viewModel: MixerViewModel
+    let onOpenSystemSettings: () -> Void
+
+    public init(viewModel: MixerViewModel, onOpenSystemSettings: @escaping () -> Void) {
+        self.viewModel = viewModel
+        self.onOpenSystemSettings = onOpenSystemSettings
+    }
+
+    public var body: some View {
+        Group {
+            switch viewModel.listState {
+            case .loading:
+                ProgressView()
+                    .padding(20)
+            case .permissionRequired:
+                PermissionRequiredView(onOpenSystemSettings: onOpenSystemSettings)
+            case .empty:
+                VStack(spacing: 8) {
+                    Image(systemName: "speaker.slash")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.secondary)
+                    Text("No apps are currently playing audio")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(20)
+                .frame(width: 240)
+            case .sessions:
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(viewModel.rowViewModels) { rowViewModel in
+                        AppVolumeRowView(viewModel: rowViewModel)
+                        Divider()
+                    }
+                }
+                .padding(12)
+                .frame(width: 280)
+            }
+        }
+        .onAppear { viewModel.requestPermission() }
+    }
+}
