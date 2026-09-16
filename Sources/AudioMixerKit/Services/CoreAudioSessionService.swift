@@ -156,9 +156,16 @@ public final class CoreAudioSessionService: AudioSessionProviding {
             return []
         }
 
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+
         return processIDs.compactMap { processObjectID -> RawAudioProcess? in
             guard Self.boolProperty(processObjectID, kAudioProcessPropertyIsRunningOutput) else { return nil }
             let pid = Self.pidProperty(processObjectID, kAudioProcessPropertyPID)
+            // AudioMixer's own live control pipelines run real output IO (that's what makes
+            // mute/volume audible), which makes Core Audio report AudioMixer itself as "currently
+            // producing audio" — confirmed via manual testing (it showed up as its own row).
+            // Never list ourselves.
+            guard pid != ownPID else { return nil }
             let rawBundleID = Self.stringProperty(processObjectID, kAudioProcessPropertyBundleID)
             // Multi-process apps (e.g. Chrome) report a DIFFERENT bundle ID per helper process
             // (confirmed via manual testing: "Google Chrome Helper" showed up as its own row,
