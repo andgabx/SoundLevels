@@ -1,0 +1,21 @@
+# Spec Kit / Claude tooling — must never be committed (see .specify/memory/constitution.md)
+.specify/
+.claude/
+
+# macOS
+.DS_Store
+
+# Xcode / Swift Package Manager
+build/
+DerivedData/
+.build/
+.swiftpm/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.moved-aside
+*.dSYM
+*.dSYM.zip
+*.ipa
