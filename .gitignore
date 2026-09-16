@@ -20,3 +20,4 @@ DerivedData/
 *.dSYM
 *.dSYM.zip
 *.ipa
+*.profraw
