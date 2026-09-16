@@ -212,6 +212,18 @@ public final class CoreAudioSessionService: AudioSessionProviding {
     /// (Chrome, Electron apps, etc.) whose helper processes report their own bundle ID to Core
     /// Audio instead of their parent app's.
     private static func ownerApplicationBundleIdentifier(forPID pid: pid_t) -> String? {
+        // Primary strategy: find the .app bundle that physically contains the process's
+        // executable on disk (e.g. Chrome's helpers live inside Google Chrome.app). This works
+        // regardless of how the process was launched (fork/exec, like Chrome, or an XPC service
+        // launched by launchd, like some system helpers) as long as it lives inside a real .app.
+        if let bundleID = Self.enclosingAppBundleIdentifier(forPID: pid) {
+            return bundleID
+        }
+
+        // Fallback: walk the process tree. Doesn't help XPC services launched directly by
+        // launchd (their parent is launchd, not the requesting app) — confirmed via manual
+        // testing with Safari's WebKit GPU process, a shared framework-level XPC service with no
+        // enclosing .app of its own, which correctly stays its own row rather than being guessed.
         let runningApps = NSWorkspace.shared.runningApplications
         var currentPID = pid
         var visited = Set<pid_t>()
@@ -226,6 +238,18 @@ public final class CoreAudioSessionService: AudioSessionProviding {
             currentPID = parentPID
         }
         return nil
+    }
+
+    private static func enclosingAppBundleIdentifier(forPID pid: pid_t) -> String? {
+        var buffer = [Int8](repeating: 0, count: 4096)
+        let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        guard length > 0 else { return nil }
+        let path = String(cString: buffer)
+        // The FIRST ".app/" in the path is the outermost bundle — correct even when a helper's
+        // own nested .app lives inside it (e.g. "Google Chrome.app/.../Google Chrome Helper.app/...").
+        guard let appMarkerRange = path.range(of: ".app/") else { return nil }
+        let appPath = String(path[path.startIndex..<appMarkerRange.upperBound].dropLast())
+        return Bundle(path: appPath)?.bundleIdentifier
     }
 
     private static func parentProcessID(of pid: pid_t) -> pid_t? {
