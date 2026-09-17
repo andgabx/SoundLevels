@@ -12,7 +12,7 @@ struct PermissionRequiredView: View {
             Text("Permission needed")
                 .font(.headline)
             Text(
-                "AudioMixer needs permission to control other apps' audio volume. " +
+                "SoundLevels needs permission to control other apps' audio volume. " +
                 "Grant it in System Settings to see and adjust individual app volumes here."
             )
             .font(.callout)

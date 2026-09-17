@@ -3,11 +3,11 @@ import AppKit
 import AudioMixerKit
 
 @main
-struct AudioMixerApp: App {
+struct SoundLevelsApp: App {
     @StateObject private var viewModel = MixerViewModel(provider: CoreAudioSessionService())
 
     var body: some Scene {
-        MenuBarExtra("AudioMixer", systemImage: "speaker.wave.2.fill") {
+        MenuBarExtra("SoundLevels", systemImage: "speaker.wave.2.fill") {
             MixerPopoverView(viewModel: viewModel, onOpenSystemSettings: openSystemSettings)
         }
         .menuBarExtraStyle(.window)

@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.andersongabriel.AudioMixer</string>
+    <string>com.andersongabriel.SoundLevels</string>
     <key>CFBundleName</key>
-    <string>AudioMixer</string>
+    <string>SoundLevels</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleVersion</key>
@@ -19,6 +19,6 @@
     <true/>
     <!-- Shown by macOS the first time the app requests the Process Tap permission (FR-010). -->
     <key>NSAudioCaptureUsageDescription</key>
-    <string>AudioMixer needs this permission to show and control the volume of individual running applications.</string>
+    <string>SoundLevels needs this permission to show and control the volume of individual running applications.</string>
 </dict>
 </plist>

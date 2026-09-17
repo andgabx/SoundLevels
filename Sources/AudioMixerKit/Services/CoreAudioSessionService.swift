@@ -2,6 +2,7 @@ import Combine
 import CoreAudio
 import AudioToolbox
 import Foundation
+import os
 #if canImport(AppKit)
 import AppKit
 #endif
@@ -12,6 +13,8 @@ import AppKit
 /// Not unit-tested — real hardware/permission dialogs aren't practical to simulate — validated
 /// manually via quickstart.md instead.
 public final class CoreAudioSessionService: AudioSessionProviding {
+    private let logger = Logger(subsystem: "com.andersongabriel.SoundLevels", category: "CoreAudioSessionService")
+
     private let permissionSubject = CurrentValueSubject<PermissionState, Never>(.notDetermined)
     private let sessionsSubject = CurrentValueSubject<[ControllableAudioSession], Never>([])
 
@@ -118,7 +121,7 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         if status == noErr {
             outputDeviceChangeListener = listener
         } else {
-            print("[AudioMixer] AudioObjectAddPropertyListenerBlock for default output device failed, status=\(status)")
+            logger.error("AudioObjectAddPropertyListenerBlock for default output device failed, status=\(status)")
         }
     }
 
@@ -138,7 +141,7 @@ public final class CoreAudioSessionService: AudioSessionProviding {
     private func rebuildLivePipelinesForOutputDeviceChange() {
         let currentPipelines = livePipelines
         guard !currentPipelines.isEmpty else { return }
-        print("[AudioMixer] default output device changed — rebuilding \(currentPipelines.count) live pipeline(s)")
+        logger.info("Default output device changed — rebuilding \(currentPipelines.count) live pipeline(s)")
         for (identity, pipeline) in currentPipelines {
             let volume = pipeline.box.volume
             let muted = pipeline.box.isMuted
@@ -154,7 +157,7 @@ public final class CoreAudioSessionService: AudioSessionProviding {
                       initialMuted: muted
                   )
             else {
-                print("[AudioMixer] \(identity): couldn't rebuild live pipeline after output device change")
+                logger.error("\(identity, privacy: .public): couldn't rebuild live pipeline after output device change")
                 continue
             }
             livePipelines[identity] = rebuilt
@@ -219,7 +222,7 @@ public final class CoreAudioSessionService: AudioSessionProviding {
 
     public func setVolume(_ volume: Double, forBundleIdentifier id: String) {
         guard var session = sessionsSubject.value.first(where: { $0.bundleIdentifier == id }), session.isControllable else {
-            print("[AudioMixer] setVolume(\(volume), \(id)): no controllable session found, ignoring")
+            logger.warning("setVolume(\(volume), \(id, privacy: .public)): no controllable session found, ignoring")
             return
         }
         session.setVolume(volume)
@@ -229,7 +232,7 @@ public final class CoreAudioSessionService: AudioSessionProviding {
 
     public func setMuted(_ isMuted: Bool, forBundleIdentifier id: String) {
         guard var session = sessionsSubject.value.first(where: { $0.bundleIdentifier == id }), session.isControllable else {
-            print("[AudioMixer] setMuted(\(isMuted), \(id)): no controllable session found, ignoring")
+            logger.warning("setMuted(\(isMuted), \(id, privacy: .public)): no controllable session found, ignoring")
             return
         }
         session.setMuted(isMuted)
@@ -260,7 +263,7 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         guard needsPipeline else {
             if let pipeline = livePipelines.removeValue(forKey: identity) {
                 LiveVolumePipelineFactory.tearDown(pipeline)
-                print("[AudioMixer] \(identity): back to natural volume, live pipeline torn down")
+                logger.info("\(identity, privacy: .public): back to natural volume, live pipeline torn down")
             }
             return
         }
@@ -273,7 +276,7 @@ public final class CoreAudioSessionService: AudioSessionProviding {
 
         let objectIDs = processObjectIDsByIdentity[identity] ?? []
         guard !identity.hasPrefix("process:"), !objectIDs.isEmpty else {
-            print("[AudioMixer] \(identity): no process object IDs known — skipping control pipeline")
+            logger.warning("\(identity, privacy: .public): no process object IDs known — skipping control pipeline")
             return
         }
 
@@ -284,6 +287,6 @@ public final class CoreAudioSessionService: AudioSessionProviding {
             initialMuted: isMuted
         ) else { return }
         livePipelines[identity] = pipeline
-        print("[AudioMixer] \(identity): live control pipeline started (tap \(pipeline.tapID), aggregate \(pipeline.aggregateDeviceID))")
+        logger.info("\(identity, privacy: .public): live control pipeline started (tap \(pipeline.tapID), aggregate \(pipeline.aggregateDeviceID))")
     }
 }

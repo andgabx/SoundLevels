@@ -31,7 +31,7 @@ struct AppVolumeRowView: View {
             .disabled(!viewModel.isControllable)
 
             if !viewModel.isControllable {
-                Text("AudioMixer can't control this app's volume individually.")
+                Text("SoundLevels can't control this app's volume individually.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

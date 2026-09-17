@@ -33,8 +33,8 @@ enum AudioProcessDiscovery {
         return processIDs.compactMap { processObjectID -> RawAudioProcess? in
             guard AudioObjectPropertyReading.boolProperty(processObjectID, kAudioProcessPropertyIsRunningOutput) else { return nil }
             let pid = AudioObjectPropertyReading.pidProperty(processObjectID, kAudioProcessPropertyPID)
-            // AudioMixer's own live control pipelines run real output IO (that's what makes
-            // mute/volume audible), which makes Core Audio report AudioMixer itself as "currently
+            // SoundLevels's own live control pipelines run real output IO (that's what makes
+            // mute/volume audible), which makes Core Audio report SoundLevels itself as "currently
             // producing audio" — confirmed via manual testing (it showed up as its own row).
             // Never list ourselves.
             guard pid != ownPID else { return nil }

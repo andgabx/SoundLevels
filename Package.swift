@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "AudioMixer",
+    name: "SoundLevels",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "AudioMixer", targets: ["AudioMixer"]),
+        .executable(name: "SoundLevels", targets: ["SoundLevels"]),
         .library(name: "AudioMixerKit", targets: ["AudioMixerKit"])
     ],
     targets: [
@@ -15,7 +15,7 @@ let package = Package(
             name: "AudioMixerKit"
         ),
         .executableTarget(
-            name: "AudioMixer",
+            name: "SoundLevels",
             dependencies: ["AudioMixerKit"],
             linkerSettings: [
                 // Embeds Info.plist directly into the executable's Mach-O __TEXT,__info_plist
@@ -26,7 +26,7 @@ let package = Package(
                     "-Xlinker", "-sectcreate",
                     "-Xlinker", "__TEXT",
                     "-Xlinker", "__info_plist",
-                    "-Xlinker", "Sources/AudioMixer/Info.plist"
+                    "-Xlinker", "Sources/SoundLevels/Info.plist"
                 ])
             ]
         ),

@@ -1,6 +1,7 @@
 import CoreAudio
 import AudioToolbox
 import Foundation
+import os
 
 /// Mutable, thread-shared state for one live pipeline's volume/mute — read from the real-time
 /// audio thread inside the IOProc, written from the main thread when the user moves a slider.
@@ -35,6 +36,8 @@ struct LiveVolumePipeline {
 }
 
 enum LiveVolumePipelineFactory {
+    private static let logger = Logger(subsystem: "com.andersongabriel.SoundLevels", category: "LiveVolumePipeline")
+
     /// Builds a tap (always `.muted`, since this pipeline becomes the sole path to the speakers
     /// once it exists), wraps it in a private Aggregate Device alongside the real default output
     /// device, and starts an `AudioDeviceIOProc` that scales the tap's captured samples by
@@ -48,7 +51,7 @@ enum LiveVolumePipelineFactory {
         initialMuted: Bool
     ) -> LiveVolumePipeline? {
         guard let outputDeviceUID = Self.defaultOutputDeviceUID() else {
-            print("[AudioMixer] \(identity): couldn't resolve the default output device UID")
+            logger.error("\(identity, privacy: .public): couldn't resolve the default output device UID")
             return nil
         }
 
@@ -60,12 +63,12 @@ enum LiveVolumePipelineFactory {
 
         var tapID: AudioObjectID = 0
         guard AudioHardwareCreateProcessTap(description, &tapID) == noErr else {
-            print("[AudioMixer] \(identity): AudioHardwareCreateProcessTap failed")
+            logger.error("\(identity, privacy: .public): AudioHardwareCreateProcessTap failed")
             return nil
         }
 
         let aggregateDescription: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "AudioMixer-\(identity)",
+            kAudioAggregateDeviceNameKey: "SoundLevels-\(identity)",
             kAudioAggregateDeviceUIDKey: UUID().uuidString,
             kAudioAggregateDeviceIsPrivateKey: true,
             kAudioAggregateDeviceTapAutoStartKey: true,
@@ -80,7 +83,7 @@ enum LiveVolumePipelineFactory {
 
         var aggregateDeviceID: AudioObjectID = 0
         guard AudioHardwareCreateAggregateDevice(aggregateDescription as CFDictionary, &aggregateDeviceID) == noErr else {
-            print("[AudioMixer] \(identity): AudioHardwareCreateAggregateDevice failed")
+            logger.error("\(identity, privacy: .public): AudioHardwareCreateAggregateDevice failed")
             AudioHardwareDestroyProcessTap(tapID)
             return nil
         }
@@ -93,13 +96,14 @@ enum LiveVolumePipelineFactory {
             && (tapFormat?.mFormatFlags ?? 0) & kAudioFormatFlagIsFloat != 0
             && tapFormat?.mBitsPerChannel == 32
         if !canScaleSamples {
-            print("[AudioMixer] \(identity): tap format isn't Float32 PCM (\(String(describing: tapFormat))) — muting only, no gain scaling")
+            logger.warning("\(identity, privacy: .public): tap format isn't Float32 PCM (\(String(describing: tapFormat), privacy: .public)) — muting only, no gain scaling")
         }
 
         let box = VolumeBox(volume: initialVolume, isMuted: initialMuted)
 
         var ioProcID: AudioDeviceIOProcID?
         let ioStatus = AudioDeviceCreateIOProcIDWithBlock(&ioProcID, aggregateDeviceID, nil) { _, inInputData, _, outOutputData, _ in
+            // No logging in here on purpose — this block runs on the real-time audio thread.
             guard canScaleSamples else { return }
             let muted = box.isMuted
             let gain = Float(max(0.0, min(1.0, box.volume)))
@@ -116,7 +120,7 @@ enum LiveVolumePipelineFactory {
             }
         }
         guard ioStatus == noErr, let ioProcID else {
-            print("[AudioMixer] \(identity): AudioDeviceCreateIOProcIDWithBlock failed, status=\(ioStatus)")
+            logger.error("\(identity, privacy: .public): AudioDeviceCreateIOProcIDWithBlock failed, status=\(ioStatus)")
             AudioHardwareDestroyAggregateDevice(aggregateDeviceID)
             AudioHardwareDestroyProcessTap(tapID)
             return nil
@@ -124,7 +128,7 @@ enum LiveVolumePipelineFactory {
 
         let startStatus = AudioDeviceStart(aggregateDeviceID, ioProcID)
         guard startStatus == noErr else {
-            print("[AudioMixer] \(identity): AudioDeviceStart failed, status=\(startStatus)")
+            logger.error("\(identity, privacy: .public): AudioDeviceStart failed, status=\(startStatus)")
             AudioDeviceDestroyIOProcID(aggregateDeviceID, ioProcID)
             AudioHardwareDestroyAggregateDevice(aggregateDeviceID)
             AudioHardwareDestroyProcessTap(tapID)
