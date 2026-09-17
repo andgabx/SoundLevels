@@ -46,12 +46,17 @@ enum AudioProcessDiscovery {
             let ownerBundleID = Self.ownerApplicationBundleIdentifier(forPID: pid) ?? rawBundleID
             let displayName = ownerBundleID.flatMap(Self.applicationName(forBundleIdentifier:))
                 ?? Self.friendlyFallbackName(fromBundleIdentifier: rawBundleID, processID: pid)
+            // Resolved here (not lazily on first slider/mute interaction) — confirmed via manual
+            // testing that the lazy approach left a visible blank-icon flash until the user
+            // touched a row (T035's follow-up note predicted exactly this).
+            let icon = ownerBundleID.flatMap(Self.applicationIcon(forBundleIdentifier:))
             return RawAudioProcess(
                 processObjectID: processObjectID,
                 processID: pid,
                 bundleIdentifier: ownerBundleID,
                 processName: displayName,
-                displayName: displayName
+                displayName: displayName,
+                icon: icon
             )
         }
     }
