@@ -1,5 +1,15 @@
 // swift-tools-version: 5.10
 import PackageDescription
+import Foundation
+
+// Anchored to the manifest's own location (T061), not the build invocation's working directory —
+// `-Xlinker` paths are otherwise resolved relative to wherever `swift build`/`swift run` is
+// invoked from, which already caused a real, silent build failure once in this project's history
+// when the shell's CWD drifted into a subdirectory.
+let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+let infoPlistPath = packageRoot
+    .appendingPathComponent("Sources/SoundLevels/Info.plist")
+    .path
 
 let package = Package(
     name: "SoundLevels",
@@ -33,7 +43,7 @@ let package = Package(
                     "-Xlinker", "-sectcreate",
                     "-Xlinker", "__TEXT",
                     "-Xlinker", "__info_plist",
-                    "-Xlinker", "Sources/SoundLevels/Info.plist"
+                    "-Xlinker", infoPlistPath
                 ])
             ]
         ),

@@ -9,6 +9,7 @@ struct PermissionRequiredView: View {
             Image(systemName: "lock.shield")
                 .font(.system(size: 28))
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             Text("Permission needed", bundle: .module)
                 .font(.headline)
             Text(

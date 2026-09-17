@@ -104,11 +104,24 @@ enum LiveVolumePipelineFactory {
         var ioProcID: AudioDeviceIOProcID?
         let ioStatus = AudioDeviceCreateIOProcIDWithBlock(&ioProcID, aggregateDeviceID, nil) { _, inInputData, _, outOutputData, _ in
             // No logging in here on purpose — this block runs on the real-time audio thread.
-            guard canScaleSamples else { return }
+            let outputBuffers = UnsafeMutableAudioBufferListPointer(outOutputData)
+            guard canScaleSamples else {
+                // Actually fall back to silence, not whatever the HAL happened to leave in the
+                // buffer — the comment above promised this, but a bare `return` here never wrote
+                // anything (a real bug: tasks.md T055). Since the tap is always `.muted` at the
+                // source, this IOProc is the only path audio reaches speakers once a pipeline
+                // exists, so an unmet "fall back to silence" guarantee is a real risk, not
+                // cosmetic.
+                for i in 0..<outputBuffers.count {
+                    if let outData = outputBuffers[i].mData {
+                        memset(outData, 0, Int(outputBuffers[i].mDataByteSize))
+                    }
+                }
+                return
+            }
             let muted = box.isMuted
             let gain = Float(max(0.0, min(1.0, box.volume)))
             let inputBuffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inInputData))
-            let outputBuffers = UnsafeMutableAudioBufferListPointer(outOutputData)
             for i in 0..<min(inputBuffers.count, outputBuffers.count) {
                 guard let inData = inputBuffers[i].mData, let outData = outputBuffers[i].mData else { continue }
                 let sampleCount = min(inputBuffers[i].mDataByteSize, outputBuffers[i].mDataByteSize) / 4

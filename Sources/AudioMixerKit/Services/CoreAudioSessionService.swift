@@ -20,8 +20,19 @@ public final class CoreAudioSessionService: AudioSessionProviding {
 
     private let graceBuffer = SessionGracePeriodBuffer()
     private var pollTimer: Timer?
-    /// The live control pipeline per session identity — only exists while that session needs
-    /// anything other than its natural volume; untouched sessions need no pipeline at all.
+    /// Guards against a background `refresh()` fetch completing out of order relative to a more
+    /// recent one (T060) — only the latest dispatched fetch's results are ever applied.
+    private var refreshGeneration = 0
+    /// The live control pipeline per session identity. Once created for an identity, it is kept
+    /// running for that session's entire lifetime — NOT torn down just because volume returns to
+    /// 1.0/unmuted. Setting `box.volume = 1.0` / `box.isMuted = false` makes the IOProc's output
+    /// byte-for-byte identical to unmodified passthrough (a multiply by 1.0), so there is no
+    /// audible difference between "natural" and "pipeline running at natural gain" — but tearing
+    /// the Aggregate Device down and recreating it IS audible every single time, no matter how
+    /// infrequently. An earlier version of this debounced the teardown instead of eliminating it;
+    /// manual testing confirmed the debounce only spaced the glitches out, it didn't remove them
+    /// (tasks.md T053 follow-up). Torn down only when the identity's session actually disappears
+    /// (`tearDownPipelinesForRemovedSessions`), on permission revocation, or in `deinit`.
     private var livePipelines: [String: LiveVolumePipeline] = [:]
     /// Real Core Audio process object IDs currently grouped under each session identity (T034) —
     /// what a live pipeline must tap, instead of an empty process list.
@@ -67,7 +78,11 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         // for: called again from MixerPopoverView.onAppear each time the popover opens, so a
         // permission grant/revocation made in System Settings while denied/granted is picked up
         // on the next open, in both directions — without polling in the background forever.
-        probeAndUpdatePermission()
+        // The actual HAL round-trip runs off the main thread (T060) — this is on the direct
+        // "user just clicked the menu bar icon" path, so keeping it off main matters for SC-001.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.probeAndUpdatePermission()
+        }
     }
 
     @available(macOS 14.4, *)
@@ -82,6 +97,16 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         let status = AudioHardwareCreateProcessTap(probe, &tapID)
         if status == noErr {
             AudioHardwareDestroyProcessTap(tapID)
+        }
+        let granted = status == noErr
+        DispatchQueue.main.async { [weak self] in
+            self?.applyPermissionProbeResult(granted: granted)
+        }
+    }
+
+    @available(macOS 14.4, *)
+    private func applyPermissionProbeResult(granted: Bool) {
+        if granted {
             permissionSubject.value = .granted
             if pollTimer == nil {
                 startPolling()
@@ -164,6 +189,40 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         }
     }
 
+    /// Re-taps any live pipeline whose underlying process set changed since the last poll (T054)
+    /// — e.g. a muted/attenuated app spawning a new audio-producing helper process (a new browser
+    /// tab, say). Without this, that new process's audio bypassed the existing tap entirely and
+    /// played at full volume, unmuted, while the UI still showed the row as muted. Mirrors
+    /// `rebuildLivePipelinesForOutputDeviceChange`'s tear-down-and-recreate pattern, preserving
+    /// volume/mute state. Skips an identity whose new process set is empty — that's the grace
+    /// period keeping a momentarily-silent session visible, not a real process-set change, and
+    /// re-tapping an empty list would just destroy a still-useful pipeline for nothing.
+    @available(macOS 14.4, *)
+    private func retapLivePipelinesWithChangedProcesses(newObjectIDsByIdentity: [String: [AudioObjectID]]) {
+        let currentPipelines = livePipelines
+        for (identity, pipeline) in currentPipelines {
+            let oldSet = Set(processObjectIDsByIdentity[identity] ?? [])
+            let newSet = Set(newObjectIDsByIdentity[identity] ?? [])
+            guard oldSet != newSet, !newSet.isEmpty else { continue }
+            logger.info("\(identity, privacy: .public): process set changed, re-tapping live pipeline")
+            let volume = pipeline.box.volume
+            let muted = pipeline.box.isMuted
+            LiveVolumePipelineFactory.tearDown(pipeline)
+            livePipelines.removeValue(forKey: identity)
+
+            guard let rebuilt = LiveVolumePipelineFactory.start(
+                forIdentity: identity,
+                objectIDs: Array(newSet),
+                initialVolume: volume,
+                initialMuted: muted
+            ) else {
+                logger.error("\(identity, privacy: .public): couldn't re-tap live pipeline after process set change")
+                continue
+            }
+            livePipelines[identity] = rebuilt
+        }
+    }
+
     // MARK: - Discovery (FR-002, FR-005)
 
     private func startPolling() {
@@ -176,19 +235,37 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         pollTimer = timer
     }
 
+    /// The actual Core Audio/AppKit discovery work (`AudioProcessDiscovery.fetchAudioProcesses`)
+    /// runs off the main thread (T060) — it's real HAL/LaunchServices round-trip work, run once a
+    /// second forever. Only the result-application step below (`applyRefreshedProcesses`) touches
+    /// shared state, and it always runs back on main.
     private func refresh() {
-        let processes = AudioProcessDiscovery.fetchAudioProcesses()
+        refreshGeneration += 1
+        let generation = refreshGeneration
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let processes = AudioProcessDiscovery.fetchAudioProcesses()
+            DispatchQueue.main.async {
+                guard let self, generation == self.refreshGeneration else { return }
+                self.applyRefreshedProcesses(processes)
+            }
+        }
+    }
 
+    private func applyRefreshedProcesses(_ processes: [RawAudioProcess]) {
         // Track each identity's real process object IDs (T034) so a live pipeline can tap the
         // right processes instead of an empty list.
         var objectIDsByIdentity: [String: [AudioObjectID]] = [:]
         for process in processes {
             objectIDsByIdentity[AudioProcessGrouping.identity(for: process), default: []].append(process.processObjectID)
         }
+
+        if #available(macOS 14.4, *) {
+            retapLivePipelinesWithChangedProcesses(newObjectIDsByIdentity: objectIDsByIdentity)
+        }
         processObjectIDsByIdentity = objectIDsByIdentity
 
         let existingByIdentity = Dictionary(
-            uniqueKeysWithValues: sessionsSubject.value.map { ($0.bundleIdentifier, $0) }
+            uniqueKeysWithValues: sessionsSubject.value.map { ($0.identity, $0) }
         )
         var grouped = AudioProcessGrouping.group(processes: processes, existing: existingByIdentity)
 
@@ -196,7 +273,7 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         // "does this process have a bundle identifier" — probed once per identity, cached, since
         // repeatedly creating/destroying taps every poll cycle would be wasteful.
         for index in grouped.indices {
-            let identity = grouped[index].bundleIdentifier
+            let identity = grouped[index].identity
             guard grouped[index].isControllable else { continue }
             if tappabilityByIdentity[identity] == nil {
                 if #available(macOS 14.4, *) {
@@ -214,14 +291,32 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         // T045: without this, tappabilityByIdentity would grow forever across a long-running
         // session touching many transient identities (e.g. many different websites' WebKit
         // helpers) — each one probed once and then never forgotten.
-        let stillPresent = Set(debounced.map(\.bundleIdentifier))
+        let stillPresent = Set(debounced.map(\.identity))
         tappabilityByIdentity = tappabilityByIdentity.filter { stillPresent.contains($0.key) }
+        if #available(macOS 14.4, *) {
+            tearDownPipelinesForRemovedSessions(stillPresent: stillPresent)
+        }
+    }
+
+    /// The only place a live pipeline is torn down for a reason other than permission revocation
+    /// or `deinit` — when the identity's session has actually disappeared (app quit, or stopped
+    /// producing audio past the grace period), not merely because volume/mute returned to
+    /// natural. See `livePipelines`'s doc comment for why "natural volume" alone must never tear
+    /// a pipeline down.
+    @available(macOS 14.4, *)
+    private func tearDownPipelinesForRemovedSessions(stillPresent: Set<String>) {
+        let removedIdentities = livePipelines.keys.filter { !stillPresent.contains($0) }
+        for identity in removedIdentities {
+            guard let pipeline = livePipelines.removeValue(forKey: identity) else { continue }
+            LiveVolumePipelineFactory.tearDown(pipeline)
+            logger.info("\(identity, privacy: .public): session ended, live pipeline torn down")
+        }
     }
 
     // MARK: - Control (FR-003/FR-004)
 
     public func setVolume(_ volume: Double, forBundleIdentifier id: String) {
-        guard var session = sessionsSubject.value.first(where: { $0.bundleIdentifier == id }), session.isControllable else {
+        guard var session = sessionsSubject.value.first(where: { $0.identity == id }), session.isControllable else {
             logger.warning("setVolume(\(volume), \(id, privacy: .public)): no controllable session found, ignoring")
             return
         }
@@ -231,7 +326,7 @@ public final class CoreAudioSessionService: AudioSessionProviding {
     }
 
     public func setMuted(_ isMuted: Bool, forBundleIdentifier id: String) {
-        guard var session = sessionsSubject.value.first(where: { $0.bundleIdentifier == id }), session.isControllable else {
+        guard var session = sessionsSubject.value.first(where: { $0.identity == id }), session.isControllable else {
             logger.warning("setMuted(\(isMuted), \(id, privacy: .public)): no controllable session found, ignoring")
             return
         }
@@ -242,37 +337,26 @@ public final class CoreAudioSessionService: AudioSessionProviding {
 
     private func publish(_ session: ControllableAudioSession) {
         var current = sessionsSubject.value
-        guard let index = current.firstIndex(where: { $0.bundleIdentifier == session.bundleIdentifier }) else { return }
+        guard let index = current.firstIndex(where: { $0.identity == session.identity }) else { return }
         current[index] = session
-        #if canImport(AppKit)
-        if current[index].icon == nil {
-            current[index].icon = AudioProcessDiscovery.applicationIcon(forBundleIdentifier: session.bundleIdentifier)
-        }
-        #endif
         sessionsSubject.value = current
     }
 
     /// Routes an app's audio through our own live pipeline whenever it needs anything other than
-    /// its natural, unmodified volume — silence if muted, `volume`-scaled samples otherwise.
-    /// Tears the pipeline down entirely once back at natural (unmuted, volume 1.0) so an
-    /// untouched app's audio needs no interception at all.
+    /// its natural, unmodified volume — silence if muted, `volume`-scaled samples otherwise. Once
+    /// created for an identity, the pipeline is kept running indefinitely (see `livePipelines`'s
+    /// doc comment) — it is never torn down here just because volume/mute returned to natural.
     private func applyControl(volume: Double, isMuted: Bool, forIdentity identity: String) {
         guard #available(macOS 14.4, *) else { return }
-
-        let needsPipeline = isMuted || volume < 1.0
-        guard needsPipeline else {
-            if let pipeline = livePipelines.removeValue(forKey: identity) {
-                LiveVolumePipelineFactory.tearDown(pipeline)
-                logger.info("\(identity, privacy: .public): back to natural volume, live pipeline torn down")
-            }
-            return
-        }
 
         if let existing = livePipelines[identity] {
             existing.box.volume = volume
             existing.box.isMuted = isMuted
             return
         }
+
+        let needsPipeline = isMuted || volume < 1.0
+        guard needsPipeline else { return }
 
         let objectIDs = processObjectIDsByIdentity[identity] ?? []
         guard !identity.hasPrefix("process:"), !objectIDs.isEmpty else {

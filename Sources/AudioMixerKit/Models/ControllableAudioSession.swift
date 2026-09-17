@@ -1,37 +1,37 @@
 import Foundation
-import AppKit
 
 /// Represents one running application currently producing (or very recently producing) audio,
 /// aggregating all of that application's audio-producing processes into a single controllable
 /// unit. See specs/001-per-app-volume-mixer/data-model.md.
+///
+/// Deliberately UI-framework-independent (Constitution I) — icon resolution lives at the View
+/// layer (`AppVolumeRowView`, via `AudioProcessDiscovery.applicationIcon`), not here.
 public struct ControllableAudioSession: Identifiable, Equatable, Comparable {
-    public var id: String { bundleIdentifier }
+    public var id: String { identity }
 
-    public let bundleIdentifier: String
+    /// Stable identity key — the real bundle identifier when resolvable, else a synthetic
+    /// `process:<name>` key (`AudioProcessGrouping.identity(for:)`); doubles as the row's unique
+    /// ID; source of grouping (research.md §3).
+    public let identity: String
     public var displayName: String
-    public var icon: NSImage?
     public private(set) var volume: Double
     public private(set) var isMuted: Bool
     public var isControllable: Bool
-    public private(set) var lastNonZeroVolume: Double
     public var lastSeenAt: Date
 
     public init(
-        bundleIdentifier: String,
+        identity: String,
         displayName: String,
-        icon: NSImage? = nil,
         volume: Double = 1.0,
         isControllable: Bool = true,
         lastSeenAt: Date = Date()
     ) {
-        self.bundleIdentifier = bundleIdentifier
+        self.identity = identity
         self.displayName = displayName
-        self.icon = icon
         let clamped = ControllableAudioSession.clamp(volume)
         self.volume = clamped
         self.isMuted = clamped == 0
         self.isControllable = isControllable
-        self.lastNonZeroVolume = clamped > 0 ? clamped : 1.0
         self.lastSeenAt = lastSeenAt
     }
 
@@ -39,47 +39,36 @@ public struct ControllableAudioSession: Identifiable, Equatable, Comparable {
         min(max(value, 0.0), 1.0)
     }
 
-    /// Slider-driven volume change (FR-003/FR-004): 0 mutes, >0 unmutes and remembers the level.
+    /// Slider-driven volume change (FR-003/FR-004): 0 mutes, >0 unmutes.
     public mutating func setVolume(_ newVolume: Double) {
         let clamped = ControllableAudioSession.clamp(newVolume)
         volume = clamped
         isMuted = clamped == 0
-        if clamped > 0 {
-            lastNonZeroVolume = clamped
-        }
     }
 
     /// Dedicated mute-toggle intent (FR-004/US2): never mutates the displayed `volume`.
     public mutating func setMuted(_ muted: Bool) {
-        if muted {
-            if volume > 0 {
-                lastNonZeroVolume = volume
-            }
-            isMuted = true
-        } else {
-            isMuted = false
-        }
+        isMuted = muted
     }
 }
 
 extension ControllableAudioSession {
     public static func == (lhs: ControllableAudioSession, rhs: ControllableAudioSession) -> Bool {
-        lhs.bundleIdentifier == rhs.bundleIdentifier
+        lhs.identity == rhs.identity
             && lhs.displayName == rhs.displayName
             && lhs.volume == rhs.volume
             && lhs.isMuted == rhs.isMuted
             && lhs.isControllable == rhs.isControllable
-            && lhs.lastNonZeroVolume == rhs.lastNonZeroVolume
     }
 
-    /// Popover row order (FR-002/FR-005): alphabetically by display name, then by bundle
-    /// identifier as a stable tiebreak. Single source of truth — `AudioProcessGrouping` and
+    /// Popover row order (FR-002/FR-005): alphabetically by display name, then by identity as a
+    /// stable tiebreak. Single source of truth — `AudioProcessGrouping` and
     /// `SessionGracePeriodBuffer` both used to duplicate this comparator; one layer's ordering
     /// fix was silently undone by the other's independent Dictionary→array conversion until both
     /// were unified here.
     public static func < (lhs: ControllableAudioSession, rhs: ControllableAudioSession) -> Bool {
         lhs.displayName == rhs.displayName
-            ? lhs.bundleIdentifier < rhs.bundleIdentifier
+            ? lhs.identity < rhs.identity
             : lhs.displayName < rhs.displayName
     }
 }

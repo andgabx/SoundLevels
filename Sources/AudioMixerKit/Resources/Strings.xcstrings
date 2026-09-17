@@ -1,6 +1,30 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Mute" : {
+      "extractionState" : "manual",
+      "comment" : "Accessibility label for the mute button in AppVolumeRowView when the app is currently unmuted.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mute"
+          }
+        }
+      }
+    },
+    "Unmute" : {
+      "extractionState" : "manual",
+      "comment" : "Accessibility label for the mute button in AppVolumeRowView when the app is currently muted.",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unmute"
+          }
+        }
+      }
+    },
     "No apps are currently playing audio" : {
       "extractionState" : "manual",
       "comment" : "Empty state shown in the popover when no application is producing audio (FR-006).",

@@ -46,17 +46,12 @@ enum AudioProcessDiscovery {
             let ownerBundleID = Self.ownerApplicationBundleIdentifier(forPID: pid) ?? rawBundleID
             let displayName = ownerBundleID.flatMap(Self.applicationName(forBundleIdentifier:))
                 ?? Self.friendlyFallbackName(fromBundleIdentifier: rawBundleID, processID: pid)
-            // Resolved here (not lazily on first slider/mute interaction) — confirmed via manual
-            // testing that the lazy approach left a visible blank-icon flash until the user
-            // touched a row (T035's follow-up note predicted exactly this).
-            let icon = ownerBundleID.flatMap(Self.applicationIcon(forBundleIdentifier:))
             return RawAudioProcess(
                 processObjectID: processObjectID,
                 processID: pid,
                 bundleIdentifier: ownerBundleID,
                 processName: displayName,
-                displayName: displayName,
-                icon: icon
+                displayName: displayName
             )
         }
     }
@@ -149,15 +144,31 @@ enum AudioProcessDiscovery {
     #endif
 
     #if canImport(AppKit)
+    // Both caches are keyed by bundle identifier, not pid — an app's resolved name/icon is stable
+    // for as long as it's installed, so there's no pid-reuse staleness risk here (unlike caching
+    // by pid would have). Never invalidated within a session: re-resolving on every 1-second poll
+    // tick for every already-known app was confirmed (via code audit) to be real, measurable,
+    // avoidable NSWorkspace/LaunchServices work — see tasks.md T057.
+    private static var applicationNameCache: [String: String] = [:]
+    private static var applicationIconCache: [String: NSImage] = [:]
+
     private static func applicationName(forBundleIdentifier bundleID: String) -> String? {
+        if let cached = applicationNameCache[bundleID] { return cached }
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
-        return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+        let name = FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+        applicationNameCache[bundleID] = name
+        return name
     }
 
     /// FR-002: the icon shown per row. `nil` falls back to the generic placeholder (Edge Cases).
+    /// Called from the View layer (`AppVolumeRowView`), not stored on the Model/ViewModel
+    /// (Constitution I) — the cache above is what keeps repeated calls cheap.
     static func applicationIcon(forBundleIdentifier bundleID: String) -> NSImage? {
+        if let cached = applicationIconCache[bundleID] { return cached }
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
-        return NSWorkspace.shared.icon(forFile: url.path)
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        applicationIconCache[bundleID] = icon
+        return icon
     }
     #else
     private static func applicationName(forBundleIdentifier bundleID: String) -> String? { nil }

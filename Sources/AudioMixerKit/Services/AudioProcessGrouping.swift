@@ -1,5 +1,4 @@
 import Foundation
-import AppKit
 
 /// One audio-producing process as reported by the real Core Audio backend, before grouping.
 public struct RawAudioProcess {
@@ -11,25 +10,19 @@ public struct RawAudioProcess {
     public let bundleIdentifier: String?
     public let processName: String
     public let displayName: String?
-    /// Resolved at discovery time (T035 follow-up) so a row shows the real app icon from the
-    /// moment it appears, instead of the generic placeholder flashing until the user first
-    /// touches its slider/mute toggle — confirmed as a real, noticeable issue via manual testing.
-    public let icon: NSImage?
 
     public init(
         processObjectID: UInt32 = 0,
         processID: Int32,
         bundleIdentifier: String?,
         processName: String,
-        displayName: String? = nil,
-        icon: NSImage? = nil
+        displayName: String? = nil
     ) {
         self.processObjectID = processObjectID
         self.processID = processID
         self.bundleIdentifier = bundleIdentifier
         self.processName = processName
         self.displayName = displayName
-        self.icon = icon
     }
 }
 
@@ -58,15 +51,19 @@ public enum AudioProcessGrouping {
 
         let sessions = byIdentity.map { identity, group -> ControllableAudioSession in
             let representative = group[0]
+            let displayName = representative.displayName ?? representative.processName
             if var known = existing[identity] {
                 known.lastSeenAt = Date()
+                // Refresh every poll rather than only on first sighting — self-correcting if the
+                // owning app wasn't fully resolvable yet the first time this identity was seen
+                // (e.g. still launching), instead of getting permanently stuck with the earlier,
+                // less-friendly resolution (a real bug this replaces — see tasks.md T057).
+                known.displayName = displayName
                 return known
             }
-            let displayName = representative.displayName ?? representative.processName
             return ControllableAudioSession(
-                bundleIdentifier: identity,
+                identity: identity,
                 displayName: displayName,
-                icon: representative.icon,
                 isControllable: representative.bundleIdentifier != nil
             )
         }

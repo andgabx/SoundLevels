@@ -62,13 +62,13 @@ public final class MixerViewModel: ObservableObject {
         var updatedByIdentity: [String: AppVolumeViewModel] = [:]
 
         for session in latestSessions {
-            if let existing = rowViewModelsByIdentity[session.bundleIdentifier] {
+            if let existing = rowViewModelsByIdentity[session.identity] {
                 updated.append(existing)
-                updatedByIdentity[session.bundleIdentifier] = existing
+                updatedByIdentity[session.identity] = existing
             } else {
                 let rowViewModel = AppVolumeViewModel(session: session, provider: provider)
                 updated.append(rowViewModel)
-                updatedByIdentity[session.bundleIdentifier] = rowViewModel
+                updatedByIdentity[session.identity] = rowViewModel
             }
         }
 

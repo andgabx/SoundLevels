@@ -35,7 +35,7 @@ final class FakeAudioSessionProvider: AudioSessionProviding {
     func setVolume(_ volume: Double, forBundleIdentifier id: String) {
         recordedCalls.append((id, "setVolume", volume))
         var current = sessionsSubject.value
-        guard let index = current.firstIndex(where: { $0.bundleIdentifier == id }) else { return }
+        guard let index = current.firstIndex(where: { $0.identity == id }) else { return }
         guard current[index].isControllable else { return }
         current[index].setVolume(volume)
         sessionsSubject.value = current
@@ -44,7 +44,7 @@ final class FakeAudioSessionProvider: AudioSessionProviding {
     func setMuted(_ isMuted: Bool, forBundleIdentifier id: String) {
         recordedCalls.append((id, "setMuted", isMuted ? 1 : 0))
         var current = sessionsSubject.value
-        guard let index = current.firstIndex(where: { $0.bundleIdentifier == id }) else { return }
+        guard let index = current.firstIndex(where: { $0.identity == id }) else { return }
         guard current[index].isControllable else { return }
         current[index].setMuted(isMuted)
         sessionsSubject.value = current

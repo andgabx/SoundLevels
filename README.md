@@ -25,7 +25,7 @@ This is a Swift Package, not an `.xcodeproj` — open it directly in Xcode:
 open Package.swift
 ```
 
-Select the **AudioMixer** scheme (not `AudioMixerKit` or `AudioMixer-Package`) and Run (⌘R).
+Select the **SoundLevels** scheme (not `AudioMixerKit` or `SoundLevels-Package`) and Run (⌘R).
 
 Or from the command line:
 

@@ -18,8 +18,8 @@ public protocol AudioSessionProviding {
     /// Emits the current list of audio-producing applications every time it changes.
     var sessions: AnyPublisher<[ControllableAudioSession], Never> { get }
 
-    /// Sets the given application's volume (0.0...1.0). Implementations MUST update
-    /// `isMuted`/`lastNonZeroVolume` consistently with the Data Model state transitions.
+    /// Sets the given application's volume (0.0...1.0). Implementations MUST update `isMuted`
+    /// consistently with the Data Model state transitions.
     func setVolume(_ volume: Double, forBundleIdentifier id: String)
 
     /// Toggles mute for the given application without discarding its slider position.

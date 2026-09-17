@@ -5,7 +5,7 @@ final class MixerViewModelTests: XCTestCase {
     func testDeniedPermissionExposesNoSessionsAndPermissionRequiredState() {
         let fake = FakeAudioSessionProvider(
             permissionState: .denied,
-            sessions: [ControllableAudioSession(bundleIdentifier: "com.apple.Music", displayName: "Music")]
+            sessions: [ControllableAudioSession(identity: "com.apple.Music", displayName: "Music")]
         )
         let viewModel = MixerViewModel(provider: fake)
 
@@ -16,18 +16,18 @@ final class MixerViewModelTests: XCTestCase {
     func testPermissionGrantedExposesCurrentSessions() {
         let fake = FakeAudioSessionProvider(
             permissionState: .granted,
-            sessions: [ControllableAudioSession(bundleIdentifier: "com.apple.Music", displayName: "Music")]
+            sessions: [ControllableAudioSession(identity: "com.apple.Music", displayName: "Music")]
         )
         let viewModel = MixerViewModel(provider: fake)
 
-        XCTAssertEqual(viewModel.rowViewModels.map(\.bundleIdentifier), ["com.apple.Music"])
+        XCTAssertEqual(viewModel.rowViewModels.map(\.identity), ["com.apple.Music"])
         XCTAssertEqual(viewModel.listState, .sessions)
     }
 
     func testPermissionTransitioningFromDeniedToGrantedWhileRunningExposesSessions() {
         let fake = FakeAudioSessionProvider(
             permissionState: .denied,
-            sessions: [ControllableAudioSession(bundleIdentifier: "com.apple.Music", displayName: "Music")]
+            sessions: [ControllableAudioSession(identity: "com.apple.Music", displayName: "Music")]
         )
         let viewModel = MixerViewModel(provider: fake)
         XCTAssertEqual(viewModel.listState, .permissionRequired)
@@ -35,13 +35,13 @@ final class MixerViewModelTests: XCTestCase {
         fake.simulatePermissionChange(.granted)
 
         XCTAssertEqual(viewModel.listState, .sessions)
-        XCTAssertEqual(viewModel.rowViewModels.map(\.bundleIdentifier), ["com.apple.Music"])
+        XCTAssertEqual(viewModel.rowViewModels.map(\.identity), ["com.apple.Music"])
     }
 
     func testPermissionRevokedWhileRunningClearsSessions() {
         let fake = FakeAudioSessionProvider(
             permissionState: .granted,
-            sessions: [ControllableAudioSession(bundleIdentifier: "com.apple.Music", displayName: "Music")]
+            sessions: [ControllableAudioSession(identity: "com.apple.Music", displayName: "Music")]
         )
         let viewModel = MixerViewModel(provider: fake)
         XCTAssertEqual(viewModel.listState, .sessions)
@@ -60,21 +60,21 @@ final class MixerViewModelTests: XCTestCase {
     }
 
     func testSessionAdditionAndRemovalUpdateRowViewModelsWithoutExplicitRefresh() {
-        let musicSession = ControllableAudioSession(bundleIdentifier: "com.apple.Music", displayName: "Music")
+        let musicSession = ControllableAudioSession(identity: "com.apple.Music", displayName: "Music")
         let fake = FakeAudioSessionProvider(permissionState: .granted, sessions: [musicSession])
         let viewModel = MixerViewModel(provider: fake)
-        XCTAssertEqual(viewModel.rowViewModels.map(\.bundleIdentifier), ["com.apple.Music"])
+        XCTAssertEqual(viewModel.rowViewModels.map(\.identity), ["com.apple.Music"])
 
-        let chromeSession = ControllableAudioSession(bundleIdentifier: "com.google.Chrome", displayName: "Chrome")
+        let chromeSession = ControllableAudioSession(identity: "com.google.Chrome", displayName: "Chrome")
         fake.simulateSessionsChange([musicSession, chromeSession])
-        XCTAssertEqual(Set(viewModel.rowViewModels.map(\.bundleIdentifier)), ["com.apple.Music", "com.google.Chrome"])
+        XCTAssertEqual(Set(viewModel.rowViewModels.map(\.identity)), ["com.apple.Music", "com.google.Chrome"])
 
         fake.simulateSessionsChange([chromeSession])
-        XCTAssertEqual(viewModel.rowViewModels.map(\.bundleIdentifier), ["com.google.Chrome"])
+        XCTAssertEqual(viewModel.rowViewModels.map(\.identity), ["com.google.Chrome"])
     }
 
     func testExistingRowViewModelInstanceIsReusedAcrossEmissionsSoInFlightStateSurvives() {
-        let musicSession = ControllableAudioSession(bundleIdentifier: "com.apple.Music", displayName: "Music")
+        let musicSession = ControllableAudioSession(identity: "com.apple.Music", displayName: "Music")
         let fake = FakeAudioSessionProvider(permissionState: .granted, sessions: [musicSession])
         let viewModel = MixerViewModel(provider: fake)
         let firstInstance = viewModel.rowViewModels.first

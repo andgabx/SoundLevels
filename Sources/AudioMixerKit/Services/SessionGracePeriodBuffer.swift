@@ -25,7 +25,7 @@ public final class SessionGracePeriodBuffer {
         for session in incoming {
             var refreshed = session
             refreshed.lastSeenAt = currentTime
-            result[session.bundleIdentifier] = refreshed
+            result[session.identity] = refreshed
         }
 
         for (identity, previous) in buffered where result[identity] == nil {

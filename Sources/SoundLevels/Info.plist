@@ -19,6 +19,6 @@
     <true/>
     <!-- Shown by macOS the first time the app requests the Process Tap permission (FR-010). -->
     <key>NSAudioCaptureUsageDescription</key>
-    <string>SoundLevels needs this permission to show and control the volume of individual running applications.</string>
+    <string>SoundLevels reads other running applications' audio streams so it can rescale them, letting you control each app's volume individually.</string>
 </dict>
 </plist>
