@@ -9,16 +9,18 @@ struct PermissionRequiredView: View {
             Image(systemName: "lock.shield")
                 .font(.system(size: 28))
                 .foregroundStyle(.secondary)
-            Text("Permission needed")
+            Text("Permission needed", bundle: .module)
                 .font(.headline)
             Text(
-                "SoundLevels needs permission to control other apps' audio volume. " +
-                "Grant it in System Settings to see and adjust individual app volumes here."
+                "SoundLevels needs permission to control other apps' audio volume. Grant it in System Settings to see and adjust individual app volumes here.",
+                bundle: .module
             )
             .font(.callout)
             .multilineTextAlignment(.center)
             .foregroundStyle(.secondary)
-            Button("Open System Settings", action: onOpenSystemSettings)
+            Button(action: onOpenSystemSettings) {
+                Text("Open System Settings", bundle: .module)
+            }
         }
         .padding(20)
         .frame(width: 260)

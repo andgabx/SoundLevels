@@ -1,0 +1,66 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "No apps are currently playing audio" : {
+      "extractionState" : "manual",
+      "comment" : "Empty state shown in the popover when no application is producing audio (FR-006).",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No apps are currently playing audio"
+          }
+        }
+      }
+    },
+    "Open System Settings" : {
+      "extractionState" : "manual",
+      "comment" : "Button that opens System Settings from PermissionRequiredView (FR-010).",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open System Settings"
+          }
+        }
+      }
+    },
+    "Permission needed" : {
+      "extractionState" : "manual",
+      "comment" : "Headline in PermissionRequiredView, shown when the Process Tap permission is denied (FR-010).",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Permission needed"
+          }
+        }
+      }
+    },
+    "SoundLevels can't control this app's volume individually." : {
+      "extractionState" : "manual",
+      "comment" : "Explanatory message on a disabled row for an uncontrollable application (FR-011).",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SoundLevels can't control this app's volume individually."
+          }
+        }
+      }
+    },
+    "SoundLevels needs permission to control other apps' audio volume. Grant it in System Settings to see and adjust individual app volumes here." : {
+      "extractionState" : "manual",
+      "comment" : "Body text in PermissionRequiredView explaining why the permission is needed (FR-010).",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "SoundLevels needs permission to control other apps' audio volume. Grant it in System Settings to see and adjust individual app volumes here."
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

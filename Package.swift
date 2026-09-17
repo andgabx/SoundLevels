@@ -12,7 +12,14 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "AudioMixerKit"
+            name: "AudioMixerKit",
+            resources: [
+                // String Catalog for user-facing UI text (T046) — the Apple-platform equivalent of
+                // Android/Kotlin's strings.xml. Views pass `bundle: .module` explicitly since this
+                // target's resources are NOT visible via the default `Bundle.main` lookup that
+                // `Text`/`Button` use otherwise.
+                .process("Resources")
+            ]
         ),
         .executableTarget(
             name: "SoundLevels",
