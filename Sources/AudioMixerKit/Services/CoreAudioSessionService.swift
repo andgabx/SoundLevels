@@ -27,6 +27,11 @@ public final class CoreAudioSessionService: AudioSessionProviding {
     /// identity (T036) — the closest real signal to "Core Audio reports no tappable stream"
     /// (FR-011), since there is no direct query property for it.
     private var tappabilityByIdentity: [String: Bool] = [:]
+    /// Registered while permission is granted (T041) so a default output device change (AirPods
+    /// connecting, HDMI, etc.) rebuilds any live pipelines instead of leaving them silently
+    /// pointing at a device that's no longer the output — each pipeline bakes the output device
+    /// UID in at creation time (see `LiveVolumePipelineFactory`).
+    private var outputDeviceChangeListener: AudioObjectPropertyListenerBlock?
 
     public var permissionState: AnyPublisher<PermissionState, Never> {
         permissionSubject.eraseToAnyPublisher()
@@ -41,6 +46,7 @@ public final class CoreAudioSessionService: AudioSessionProviding {
     deinit {
         pollTimer?.invalidate()
         if #available(macOS 14.4, *) {
+            stopObservingDefaultOutputDeviceChanges()
             for pipeline in livePipelines.values {
                 LiveVolumePipelineFactory.tearDown(pipeline)
             }
@@ -76,16 +82,82 @@ public final class CoreAudioSessionService: AudioSessionProviding {
             permissionSubject.value = .granted
             if pollTimer == nil {
                 startPolling()
+                startObservingDefaultOutputDeviceChanges()
             }
         } else {
             permissionSubject.value = .denied
             pollTimer?.invalidate()
             pollTimer = nil
+            stopObservingDefaultOutputDeviceChanges()
             sessionsSubject.value = []
             for pipeline in livePipelines.values {
                 LiveVolumePipelineFactory.tearDown(pipeline)
             }
             livePipelines.removeAll()
+        }
+    }
+
+    /// Rebuilds every live pipeline against whatever the default output device now is (T041).
+    /// Each pipeline bakes the output device UID in at creation time — there is no in-place
+    /// "retarget" API — so a real device change requires tearing down and recreating, preserving
+    /// the volume/mute state each pipeline already had.
+    @available(macOS 14.4, *)
+    private func startObservingDefaultOutputDeviceChanges() {
+        guard outputDeviceChangeListener == nil else { return }
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            DispatchQueue.main.async {
+                self?.rebuildLivePipelinesForOutputDeviceChange()
+            }
+        }
+        let status = AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, nil, listener)
+        if status == noErr {
+            outputDeviceChangeListener = listener
+        } else {
+            print("[AudioMixer] AudioObjectAddPropertyListenerBlock for default output device failed, status=\(status)")
+        }
+    }
+
+    @available(macOS 14.4, *)
+    private func stopObservingDefaultOutputDeviceChanges() {
+        guard let listener = outputDeviceChangeListener else { return }
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, nil, listener)
+        outputDeviceChangeListener = nil
+    }
+
+    @available(macOS 14.4, *)
+    private func rebuildLivePipelinesForOutputDeviceChange() {
+        let currentPipelines = livePipelines
+        guard !currentPipelines.isEmpty else { return }
+        print("[AudioMixer] default output device changed — rebuilding \(currentPipelines.count) live pipeline(s)")
+        for (identity, pipeline) in currentPipelines {
+            let volume = pipeline.box.volume
+            let muted = pipeline.box.isMuted
+            LiveVolumePipelineFactory.tearDown(pipeline)
+            livePipelines.removeValue(forKey: identity)
+
+            let objectIDs = processObjectIDsByIdentity[identity] ?? []
+            guard !objectIDs.isEmpty,
+                  let rebuilt = LiveVolumePipelineFactory.start(
+                      forIdentity: identity,
+                      objectIDs: objectIDs,
+                      initialVolume: volume,
+                      initialMuted: muted
+                  )
+            else {
+                print("[AudioMixer] \(identity): couldn't rebuild live pipeline after output device change")
+                continue
+            }
+            livePipelines[identity] = rebuilt
         }
     }
 
