@@ -46,6 +46,11 @@ public final class CoreAudioSessionService: AudioSessionProviding {
     /// pointing at a device that's no longer the output — each pipeline bakes the output device
     /// UID in at creation time (see `LiveVolumePipelineFactory`).
     private var outputDeviceChangeListener: AudioObjectPropertyListenerBlock?
+    /// Durable volume/mute storage (spec 002) — written on every `setVolume`/`setMuted` call,
+    /// read only for identities newly discovered in `applyRefreshedProcesses`. Never consulted by
+    /// `AudioProcessGrouping` itself, which stays a pure, dependency-free function
+    /// (specs/002-volume-persistence/research.md §3).
+    private let volumePreferences: VolumePreferencesProviding
 
     public var permissionState: AnyPublisher<PermissionState, Never> {
         permissionSubject.eraseToAnyPublisher()
@@ -55,7 +60,9 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         sessionsSubject.eraseToAnyPublisher()
     }
 
-    public init() {}
+    public init(volumePreferences: VolumePreferencesProviding = UserDefaultsVolumePreferencesStore()) {
+        self.volumePreferences = volumePreferences
+    }
 
     deinit {
         pollTimer?.invalidate()
@@ -269,6 +276,21 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         )
         var grouped = AudioProcessGrouping.group(processes: processes, existing: existingByIdentity)
 
+        // Seed newly-discovered identities (spec 002, FR-002/FR-003) with any persisted
+        // volume/mute state — never for an identity already in existingByIdentity, since that
+        // session's current in-memory state (possibly mid-adjustment) must win, not a stale
+        // persisted snapshot from before this run started tracking it. Also apply it to the real
+        // Core Audio pipeline via `applyControl`, not just the displayed session state — without
+        // this, the slider showed the restored value but the app's actual audio stayed at natural
+        // volume until the user touched the slider again (confirmed via manual testing: a real
+        // bug, not just a display lag).
+        for index in grouped.indices where existingByIdentity[grouped[index].identity] == nil {
+            guard let persisted = volumePreferences.persistedState(for: grouped[index].identity) else { continue }
+            grouped[index].setVolume(persisted.volume)
+            grouped[index].setMuted(persisted.isMuted)
+            applyControl(volume: grouped[index].volume, isMuted: grouped[index].isMuted, forIdentity: grouped[index].identity)
+        }
+
         // Refine isControllable with a real tappability probe (T036, FR-011) rather than only
         // "does this process have a bundle identifier" — probed once per identity, cached, since
         // repeatedly creating/destroying taps every poll cycle would be wasteful.
@@ -321,6 +343,7 @@ public final class CoreAudioSessionService: AudioSessionProviding {
             return
         }
         session.setVolume(volume)
+        volumePreferences.setVolume(session.volume, for: id)
         applyControl(volume: session.volume, isMuted: session.isMuted, forIdentity: id)
         publish(session)
     }
@@ -331,6 +354,7 @@ public final class CoreAudioSessionService: AudioSessionProviding {
             return
         }
         session.setMuted(isMuted)
+        volumePreferences.setMuted(session.isMuted, for: id)
         applyControl(volume: session.volume, isMuted: session.isMuted, forIdentity: id)
         publish(session)
     }
