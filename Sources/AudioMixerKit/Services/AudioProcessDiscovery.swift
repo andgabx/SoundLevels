@@ -12,11 +12,7 @@ import AppKit
 /// `CoreAudioSessionService` (the orchestrator that owns polling/caching state).
 enum AudioProcessDiscovery {
     static func fetchAudioProcesses() -> [RawAudioProcess] {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyProcessObjectList,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
+        var address = AudioObjectPropertyReading.address(kAudioHardwarePropertyProcessObjectList)
 
         var dataSize: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize) == noErr else {

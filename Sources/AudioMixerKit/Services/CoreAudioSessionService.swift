@@ -41,11 +41,14 @@ public final class CoreAudioSessionService: AudioSessionProviding {
     /// identity (T036) — the closest real signal to "Core Audio reports no tappable stream"
     /// (FR-011), since there is no direct query property for it.
     private var tappabilityByIdentity: [String: Bool] = [:]
-    /// Registered while permission is granted (T041) so a default output device change (AirPods
-    /// connecting, HDMI, etc.) rebuilds any live pipelines instead of leaving them silently
-    /// pointing at a device that's no longer the output — each pipeline bakes the output device
-    /// UID in at creation time (see `LiveVolumePipelineFactory`).
-    private var outputDeviceChangeListener: AudioObjectPropertyListenerBlock?
+    /// Registered while permission is granted (T041); rebuilds any live pipelines on a default
+    /// output device change (AirPods connecting, HDMI, etc.) instead of leaving them silently
+    /// pointing at a device that's no longer the output (spec 004: extracted to its own type).
+    private lazy var outputDeviceObserver = DefaultOutputDeviceChangeObserver { [weak self] in
+        if #available(macOS 14.4, *) {
+            self?.rebuildLivePipelinesForOutputDeviceChange()
+        }
+    }
     /// Durable volume/mute storage (spec 002) — written on every `setVolume`/`setMuted` call,
     /// read only for identities newly discovered in `applyRefreshedProcesses`. Never consulted by
     /// `AudioProcessGrouping` itself, which stays a pure, dependency-free function
@@ -67,7 +70,7 @@ public final class CoreAudioSessionService: AudioSessionProviding {
     deinit {
         pollTimer?.invalidate()
         if #available(macOS 14.4, *) {
-            stopObservingDefaultOutputDeviceChanges()
+            outputDeviceObserver.stop()
             for pipeline in livePipelines.values {
                 LiveVolumePipelineFactory.tearDown(pipeline)
             }
@@ -88,26 +91,10 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         // The actual HAL round-trip runs off the main thread (T060) — this is on the direct
         // "user just clicked the menu bar icon" path, so keeping it off main matters for SC-001.
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.probeAndUpdatePermission()
-        }
-    }
-
-    @available(macOS 14.4, *)
-    private func probeAndUpdatePermission() {
-        // Probing with a harmless, immediately-destroyed global tap is the documented way to
-        // trigger (and observe the result of) the system's Process Tap permission prompt, since
-        // there is no dedicated "request access" API for this capability. Once already granted
-        // or denied, this call doesn't re-show any dialog — it just reports the OS's current
-        // answer, which is exactly what we need to detect a change made in System Settings.
-        let probe = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
-        var tapID: AudioObjectID = 0
-        let status = AudioHardwareCreateProcessTap(probe, &tapID)
-        if status == noErr {
-            AudioHardwareDestroyProcessTap(tapID)
-        }
-        let granted = status == noErr
-        DispatchQueue.main.async { [weak self] in
-            self?.applyPermissionProbeResult(granted: granted)
+            let granted = ProcessTapPermissionProbe.checkGranted()
+            DispatchQueue.main.async {
+                self?.applyPermissionProbeResult(granted: granted)
+            }
         }
     }
 
@@ -117,13 +104,13 @@ public final class CoreAudioSessionService: AudioSessionProviding {
             permissionSubject.value = .granted
             if pollTimer == nil {
                 startPolling()
-                startObservingDefaultOutputDeviceChanges()
+                outputDeviceObserver.start()
             }
         } else {
             permissionSubject.value = .denied
             pollTimer?.invalidate()
             pollTimer = nil
-            stopObservingDefaultOutputDeviceChanges()
+            outputDeviceObserver.stop()
             sessionsSubject.value = []
             for pipeline in livePipelines.values {
                 LiveVolumePipelineFactory.tearDown(pipeline)
@@ -136,39 +123,6 @@ public final class CoreAudioSessionService: AudioSessionProviding {
     /// Each pipeline bakes the output device UID in at creation time — there is no in-place
     /// "retarget" API — so a real device change requires tearing down and recreating, preserving
     /// the volume/mute state each pipeline already had.
-    @available(macOS 14.4, *)
-    private func startObservingDefaultOutputDeviceChanges() {
-        guard outputDeviceChangeListener == nil else { return }
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            DispatchQueue.main.async {
-                self?.rebuildLivePipelinesForOutputDeviceChange()
-            }
-        }
-        let status = AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, nil, listener)
-        if status == noErr {
-            outputDeviceChangeListener = listener
-        } else {
-            logger.error("AudioObjectAddPropertyListenerBlock for default output device failed, status=\(status)")
-        }
-    }
-
-    @available(macOS 14.4, *)
-    private func stopObservingDefaultOutputDeviceChanges() {
-        guard let listener = outputDeviceChangeListener else { return }
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, nil, listener)
-        outputDeviceChangeListener = nil
-    }
-
     @available(macOS 14.4, *)
     private func rebuildLivePipelinesForOutputDeviceChange() {
         let currentPipelines = livePipelines
@@ -338,24 +292,38 @@ public final class CoreAudioSessionService: AudioSessionProviding {
     // MARK: - Control (FR-003/FR-004)
 
     public func setVolume(_ volume: Double, forBundleIdentifier id: String) {
-        guard var session = sessionsSubject.value.first(where: { $0.identity == id }), session.isControllable else {
-            logger.warning("setVolume(\(volume), \(id, privacy: .public)): no controllable session found, ignoring")
-            return
+        mutateControllableSession(id: id, operation: "setVolume(\(volume), \(id))") { session in
+            session.setVolume(volume)
+        } sideEffect: { session in
+            volumePreferences.setVolume(session.volume, for: id)
+            applyControl(volume: session.volume, isMuted: session.isMuted, forIdentity: id)
         }
-        session.setVolume(volume)
-        volumePreferences.setVolume(session.volume, for: id)
-        applyControl(volume: session.volume, isMuted: session.isMuted, forIdentity: id)
-        publish(session)
     }
 
     public func setMuted(_ isMuted: Bool, forBundleIdentifier id: String) {
+        mutateControllableSession(id: id, operation: "setMuted(\(isMuted), \(id))") { session in
+            session.setMuted(isMuted)
+        } sideEffect: { session in
+            volumePreferences.setMuted(session.isMuted, for: id)
+            applyControl(volume: session.volume, isMuted: session.isMuted, forIdentity: id)
+        }
+    }
+
+    /// Shared shape for every control-mutation entry point (spec 004 FR-004): find the session by
+    /// identity, guard it's controllable (else log and stop), mutate it, run the
+    /// operation-specific side effect (persistence + real pipeline), then republish.
+    private func mutateControllableSession(
+        id: String,
+        operation: String,
+        mutate: (inout ControllableAudioSession) -> Void,
+        sideEffect: (ControllableAudioSession) -> Void
+    ) {
         guard var session = sessionsSubject.value.first(where: { $0.identity == id }), session.isControllable else {
-            logger.warning("setMuted(\(isMuted), \(id, privacy: .public)): no controllable session found, ignoring")
+            logger.warning("\(operation, privacy: .public): no controllable session found, ignoring")
             return
         }
-        session.setMuted(isMuted)
-        volumePreferences.setMuted(session.isMuted, for: id)
-        applyControl(volume: session.volume, isMuted: session.isMuted, forIdentity: id)
+        mutate(&session)
+        sideEffect(session)
         publish(session)
     }
 
