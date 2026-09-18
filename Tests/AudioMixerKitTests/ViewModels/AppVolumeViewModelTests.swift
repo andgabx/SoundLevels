@@ -2,9 +2,6 @@ import XCTest
 @testable import AudioMixerKit
 
 final class AppVolumeViewModelTests: XCTestCase {
-    /// Constructs the view model directly against the fake — no `MixerViewModel` involved.
-    /// T040: `AppVolumeViewModel` now subscribes to `provider.sessions` itself, so it no longer
-    /// depends on anything else being kept alive to keep receiving updates.
     private func makeViewModel(
         session: ControllableAudioSession,
         otherSessions: [ControllableAudioSession] = [],
@@ -75,16 +72,14 @@ final class AppVolumeViewModelTests: XCTestCase {
         let session = ControllableAudioSession(identity: "com.apple.Music", displayName: "Music", volume: 0.6)
         let (viewModel, _) = makeViewModel(session: session)
 
-        viewModel.toggleMute() // mute on
-        viewModel.toggleMute() // mute off
+        viewModel.toggleMute()
+        viewModel.toggleMute()
 
         XCTAssertFalse(viewModel.isMuted)
         XCTAssertEqual(viewModel.volume, 0.6)
     }
 
     func testUpdatesIndependentlyWithoutAnyMixerViewModelAlive() {
-        // T040's core guarantee: no MixerViewModel is ever constructed here, yet the row
-        // view model still reacts to provider changes on its own.
         let session = ControllableAudioSession(identity: "com.apple.Music", displayName: "Music", volume: 0.5)
         let fake = FakeAudioSessionProvider(permissionState: .granted, sessions: [session])
         let viewModel = AppVolumeViewModel(session: session, provider: fake)

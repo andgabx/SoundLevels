@@ -3,11 +3,6 @@ import AudioToolbox
 import Foundation
 import os
 
-/// Mutable, thread-shared state for one live pipeline's volume/mute — read from the real-time
-/// audio thread inside the IOProc, written from the main thread when the user moves a slider.
-/// Deliberately unsynchronized: both fields are simple scalars where a torn read is harmless
-/// (worst case, one stale sample), which is an accepted trade-off to avoid locks on the audio
-/// thread. Revisit if this ever needs to be provably safe under strict concurrency checking.
 final class VolumeBox {
     var volume: Double
     var isMuted: Bool
@@ -17,17 +12,6 @@ final class VolumeBox {
     }
 }
 
-/// The tap + private Aggregate Device (tap + real output sub-device) + running IOProc that makes
-/// both mute AND continuous volume audible for one application.
-///
-/// Manual testing (2026-09-16) confirmed `CATapDescription.muteBehavior` alone has NO audible
-/// effect until the tap is part of a live IO cycle — Core Audio only enforces it once the tap is
-/// actually running inside an Aggregate Device. To get continuous gain (not just mute), the tap
-/// is always set `.muted` once this pipeline exists (stopping the app's direct passthrough to
-/// hardware entirely), and the IOProc itself reads the tap's captured samples, scales them by
-/// `box.volume` (silence if `box.isMuted`), and writes the result to the real output device
-/// included in the same aggregate — making this pipeline the sole path by which that app's audio
-/// reaches the speakers while it's active.
 struct LiveVolumePipeline {
     let tapID: AudioObjectID
     let aggregateDeviceID: AudioObjectID
@@ -38,11 +22,6 @@ struct LiveVolumePipeline {
 enum LiveVolumePipelineFactory {
     private static let logger = Logger(subsystem: "com.andersongabriel.SoundLevels", category: "LiveVolumePipeline")
 
-    /// Builds a tap (always `.muted`, since this pipeline becomes the sole path to the speakers
-    /// once it exists), wraps it in a private Aggregate Device alongside the real default output
-    /// device, and starts an `AudioDeviceIOProc` that scales the tap's captured samples by
-    /// `box.volume` and writes them to that real device — this is what makes both mute AND
-    /// continuous volume audible (see `LiveVolumePipeline` doc).
     @available(macOS 14.4, *)
     static func start(
         forIdentity identity: String,
@@ -89,11 +68,6 @@ enum LiveVolumePipelineFactory {
             return nil
         }
 
-        // Defensive: only attempt sample-accurate scaling if the tap's format is exactly what we
-        // expect (Linear PCM, Float32). If it's anything else, fall back to silence rather than
-        // risk writing garbage/loud noise from a misinterpreted buffer. Sample rate is
-        // deliberately NOT gated here — the IOProc below resamples by proportional frame
-        // position, which handles a rate mismatch correctly instead of needing to reject it.
         let tapFormat = Self.tapStreamFormat(tapID)
         let outputSampleRate = AudioObjectPropertyReading.structProperty(outputDevice.id, kAudioDevicePropertyNominalSampleRate, defaultValue: Double(0))
         let canScaleSamples = tapFormat?.mFormatID == kAudioFormatLinearPCM
@@ -112,7 +86,6 @@ enum LiveVolumePipelineFactory {
 
         var ioProcID: AudioDeviceIOProcID?
         let ioStatus = AudioDeviceCreateIOProcIDWithBlock(&ioProcID, aggregateDeviceID, nil) { _, inInputData, _, outOutputData, _ in
-            // No logging in here on purpose — this block runs on the real-time audio thread.
             let outputBuffers = UnsafeMutableAudioBufferListPointer(outOutputData)
             guard canScaleSamples else {
                 for i in 0..<outputBuffers.count {
@@ -127,22 +100,6 @@ enum LiveVolumePipelineFactory {
             let inputBuffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inInputData))
             for i in 0..<outputBuffers.count {
                 guard let outData = outputBuffers[i].mData else { continue }
-                // Confirmed via manual testing: some apps' taps run at a different sample rate
-                // than the real output device's *current* rate (Zoom's tap reports 48kHz while
-                // it forces the system output to 24kHz during a call) — copying samples 1:1 by
-                // raw index when rates differ is a de-facto time-stretch (it plays only the
-                // first N/ratio samples, stretched to fill the whole output window), producing
-                // the deep/robotic voice artifact. Mapping each output frame to the
-                // *proportionally* corresponding input frame keeps pitch/speed correct
-                // regardless of the actual rate ratio — including the common case where the
-                // rates already match, which this formula reduces to a 1:1 copy anyway.
-                //
-                // Deliberately NOT cross-checking inputBuffers[i].mNumberChannels against
-                // outputBuffers[i].mNumberChannels here (tried once, reverted) — Zoom's input
-                // AudioBufferList apparently isn't laid out the same way (e.g. non-interleaved
-                // vs interleaved) as the output's, so that comparison isn't meaningful buffer-
-                // for-buffer and caused Zoom to go permanently silent. Channel count is taken
-                // from the output buffer only, same as the pre-2026-09-18 code always did.
                 guard i < inputBuffers.count, let inData = inputBuffers[i].mData else {
                     memset(outData, 0, Int(outputBuffers[i].mDataByteSize))
                     continue

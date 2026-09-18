@@ -1,7 +1,5 @@
 import AudioMixerKit
 
-/// In-memory test double for `VolumePreferencesProviding` — lets a test inject known persisted
-/// state without touching real `UserDefaults` at all.
 final class FakeVolumePreferencesStore: VolumePreferencesProviding {
     private var storage: [String: (volume: Double, isMuted: Bool)] = [:]
 

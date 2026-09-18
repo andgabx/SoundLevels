@@ -9,7 +9,7 @@ final class SessionGracePeriodBufferTests: XCTestCase {
         let music = ControllableAudioSession(identity: "com.apple.Music", displayName: "Music")
         _ = buffer.apply([music])
 
-        currentTime = currentTime.addingTimeInterval(1.5) // brief pause, still within 3s
+        currentTime = currentTime.addingTimeInterval(1.5)
         let result = buffer.apply([])
 
         XCTAssertEqual(result.map(\.identity), ["com.apple.Music"])
@@ -22,7 +22,7 @@ final class SessionGracePeriodBufferTests: XCTestCase {
         let music = ControllableAudioSession(identity: "com.apple.Music", displayName: "Music")
         _ = buffer.apply([music])
 
-        currentTime = currentTime.addingTimeInterval(3.5) // longer than the grace period
+        currentTime = currentTime.addingTimeInterval(3.5)
         let result = buffer.apply([])
 
         XCTAssertTrue(result.isEmpty)
@@ -36,9 +36,9 @@ final class SessionGracePeriodBufferTests: XCTestCase {
         _ = buffer.apply([music])
 
         currentTime = currentTime.addingTimeInterval(2)
-        _ = buffer.apply([music]) // reappears, lastSeenAt refreshed
+        _ = buffer.apply([music])
 
-        currentTime = currentTime.addingTimeInterval(2) // 2s since reappearance, still < 3s
+        currentTime = currentTime.addingTimeInterval(2)
         let result = buffer.apply([])
 
         XCTAssertEqual(result.map(\.identity), ["com.apple.Music"])

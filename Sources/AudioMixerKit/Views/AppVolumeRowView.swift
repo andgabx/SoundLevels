@@ -3,13 +3,6 @@ import SwiftUI
 import AppKit
 #endif
 
-/// One row per application: icon, name, volume slider, mute toggle (FR-002/FR-003/FR-004).
-/// Renders disabled with an explanatory message when the session isn't controllable (FR-011).
-/// No business logic here — everything is delegated to `AppVolumeViewModel` (Constitution I).
-/// Resolves its own icon (Constitution I keeps `NSImage` out of the Model/ViewModel layers) via
-/// `AudioProcessDiscovery.applicationIcon`, which is cheap after the first call per identity
-/// thanks to its internal cache (tasks.md T057) — resolved once per row via `.task(id:)`, not on
-/// every body re-render, so an interactive slider drag never triggers a fresh lookup.
 struct AppVolumeRowView: View {
     @ObservedObject var viewModel: AppVolumeViewModel
     @State private var resolvedIcon: NSImage?

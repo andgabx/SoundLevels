@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Shown instead of the session list while the Process Tap permission is denied (FR-010).
 struct PermissionRequiredView: View {
     let onOpenSystemSettings: () -> Void
 

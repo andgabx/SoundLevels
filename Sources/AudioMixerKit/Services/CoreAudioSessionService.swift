@@ -7,11 +7,6 @@ import os
 import AppKit
 #endif
 
-/// Real Core Audio backend for `AudioSessionProviding` — orchestrates permission checks,
-/// discovery/polling (`AudioProcessDiscovery`), and per-app live control pipelines
-/// (`LiveVolumePipeline`). Built on the public Process Tap API (macOS 14.4+, research.md §1).
-/// Not unit-tested — real hardware/permission dialogs aren't practical to simulate — validated
-/// manually via quickstart.md instead.
 public final class CoreAudioSessionService: AudioSessionProviding {
     private let logger = Logger(subsystem: "com.andersongabriel.SoundLevels", category: "CoreAudioSessionService")
 
@@ -20,39 +15,15 @@ public final class CoreAudioSessionService: AudioSessionProviding {
 
     private let graceBuffer = SessionGracePeriodBuffer()
     private var pollTimer: Timer?
-    /// Guards against a background `refresh()` fetch completing out of order relative to a more
-    /// recent one (T060) — only the latest dispatched fetch's results are ever applied.
     private var refreshGeneration = 0
-    /// The live control pipeline per session identity. Once created for an identity, it is kept
-    /// running for that session's entire lifetime — NOT torn down just because volume returns to
-    /// 1.0/unmuted. Setting `box.volume = 1.0` / `box.isMuted = false` makes the IOProc's output
-    /// byte-for-byte identical to unmodified passthrough (a multiply by 1.0), so there is no
-    /// audible difference between "natural" and "pipeline running at natural gain" — but tearing
-    /// the Aggregate Device down and recreating it IS audible every single time, no matter how
-    /// infrequently. An earlier version of this debounced the teardown instead of eliminating it;
-    /// manual testing confirmed the debounce only spaced the glitches out, it didn't remove them
-    /// (tasks.md T053 follow-up). Torn down only when the identity's session actually disappears
-    /// (`tearDownPipelinesForRemovedSessions`), on permission revocation, or in `deinit`.
     private var livePipelines: [String: LiveVolumePipeline] = [:]
-    /// Real Core Audio process object IDs currently grouped under each session identity (T034) —
-    /// what a live pipeline must tap, instead of an empty process list.
     private var processObjectIDsByIdentity: [String: [AudioObjectID]] = [:]
-    /// Whether a tap could actually be created for an identity's processes, probed once per new
-    /// identity (T036) — the closest real signal to "Core Audio reports no tappable stream"
-    /// (FR-011), since there is no direct query property for it.
     private var tappabilityByIdentity: [String: Bool] = [:]
-    /// Registered while permission is granted (T041); rebuilds any live pipelines on a default
-    /// output device change (AirPods connecting, HDMI, etc.) instead of leaving them silently
-    /// pointing at a device that's no longer the output (spec 004: extracted to its own type).
     private lazy var outputDeviceObserver = DefaultOutputDeviceChangeObserver { [weak self] in
         if #available(macOS 14.4, *) {
             self?.rebuildLivePipelinesForOutputDeviceChange()
         }
     }
-    /// Durable volume/mute storage (spec 002) — written on every `setVolume`/`setMuted` call,
-    /// read only for identities newly discovered in `applyRefreshedProcesses`. Never consulted by
-    /// `AudioProcessGrouping` itself, which stays a pure, dependency-free function
-    /// (specs/002-volume-persistence/research.md §3).
     private let volumePreferences: VolumePreferencesProviding
 
     public var permissionState: AnyPublisher<PermissionState, Never> {
@@ -77,19 +48,11 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         }
     }
 
-    // MARK: - Permission (FR-010)
-
     public func requestPermission() {
         guard #available(macOS 14.4, *) else {
             permissionSubject.value = .denied
             return
         }
-        // Re-probing every time (not just once) lets this double as the "re-check" T012 asked
-        // for: called again from MixerPopoverView.onAppear each time the popover opens, so a
-        // permission grant/revocation made in System Settings while denied/granted is picked up
-        // on the next open, in both directions — without polling in the background forever.
-        // The actual HAL round-trip runs off the main thread (T060) — this is on the direct
-        // "user just clicked the menu bar icon" path, so keeping it off main matters for SC-001.
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let granted = ProcessTapPermissionProbe.checkGranted()
             DispatchQueue.main.async {
@@ -119,10 +82,6 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         }
     }
 
-    /// Rebuilds every live pipeline against whatever the default output device now is (T041).
-    /// Each pipeline bakes the output device UID in at creation time — there is no in-place
-    /// "retarget" API — so a real device change requires tearing down and recreating, preserving
-    /// the volume/mute state each pipeline already had.
     @available(macOS 14.4, *)
     private func rebuildLivePipelinesForOutputDeviceChange() {
         let currentPipelines = livePipelines
@@ -151,14 +110,6 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         }
     }
 
-    /// Re-taps any live pipeline whose underlying process set changed since the last poll (T054)
-    /// — e.g. a muted/attenuated app spawning a new audio-producing helper process (a new browser
-    /// tab, say). Without this, that new process's audio bypassed the existing tap entirely and
-    /// played at full volume, unmuted, while the UI still showed the row as muted. Mirrors
-    /// `rebuildLivePipelinesForOutputDeviceChange`'s tear-down-and-recreate pattern, preserving
-    /// volume/mute state. Skips an identity whose new process set is empty — that's the grace
-    /// period keeping a momentarily-silent session visible, not a real process-set change, and
-    /// re-tapping an empty list would just destroy a still-useful pipeline for nothing.
     @available(macOS 14.4, *)
     private func retapLivePipelinesWithChangedProcesses(newObjectIDsByIdentity: [String: [AudioObjectID]]) {
         let currentPipelines = livePipelines
@@ -185,8 +136,6 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         }
     }
 
-    // MARK: - Discovery (FR-002, FR-005)
-
     private func startPolling() {
         pollTimer?.invalidate()
         refresh()
@@ -197,10 +146,6 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         pollTimer = timer
     }
 
-    /// The actual Core Audio/AppKit discovery work (`AudioProcessDiscovery.fetchAudioProcesses`)
-    /// runs off the main thread (T060) — it's real HAL/LaunchServices round-trip work, run once a
-    /// second forever. Only the result-application step below (`applyRefreshedProcesses`) touches
-    /// shared state, and it always runs back on main.
     private func refresh() {
         refreshGeneration += 1
         let generation = refreshGeneration
@@ -214,8 +159,6 @@ public final class CoreAudioSessionService: AudioSessionProviding {
     }
 
     private func applyRefreshedProcesses(_ processes: [RawAudioProcess]) {
-        // Track each identity's real process object IDs (T034) so a live pipeline can tap the
-        // right processes instead of an empty list.
         var objectIDsByIdentity: [String: [AudioObjectID]] = [:]
         for process in processes {
             objectIDsByIdentity[AudioProcessGrouping.identity(for: process), default: []].append(process.processObjectID)
@@ -231,14 +174,6 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         )
         var grouped = AudioProcessGrouping.group(processes: processes, existing: existingByIdentity)
 
-        // Seed newly-discovered identities (spec 002, FR-002/FR-003) with any persisted
-        // volume/mute state — never for an identity already in existingByIdentity, since that
-        // session's current in-memory state (possibly mid-adjustment) must win, not a stale
-        // persisted snapshot from before this run started tracking it. Also apply it to the real
-        // Core Audio pipeline via `applyControl`, not just the displayed session state — without
-        // this, the slider showed the restored value but the app's actual audio stayed at natural
-        // volume until the user touched the slider again (confirmed via manual testing: a real
-        // bug, not just a display lag).
         for index in grouped.indices where existingByIdentity[grouped[index].identity] == nil {
             guard let persisted = volumePreferences.persistedState(for: grouped[index].identity) else { continue }
             grouped[index].setVolume(persisted.volume)
@@ -246,9 +181,6 @@ public final class CoreAudioSessionService: AudioSessionProviding {
             applyControl(volume: grouped[index].volume, isMuted: grouped[index].isMuted, forIdentity: grouped[index].identity)
         }
 
-        // Refine isControllable with a real tappability probe (T036, FR-011) rather than only
-        // "does this process have a bundle identifier" — probed once per identity, cached, since
-        // repeatedly creating/destroying taps every poll cycle would be wasteful.
         for index in grouped.indices {
             let identity = grouped[index].identity
             guard grouped[index].isControllable else { continue }
@@ -265,9 +197,6 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         let debounced = graceBuffer.apply(grouped)
         sessionsSubject.value = debounced
 
-        // T045: without this, tappabilityByIdentity would grow forever across a long-running
-        // session touching many transient identities (e.g. many different websites' WebKit
-        // helpers) — each one probed once and then never forgotten.
         let stillPresent = Set(debounced.map(\.identity))
         tappabilityByIdentity = tappabilityByIdentity.filter { stillPresent.contains($0.key) }
         if #available(macOS 14.4, *) {
@@ -275,11 +204,6 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         }
     }
 
-    /// The only place a live pipeline is torn down for a reason other than permission revocation
-    /// or `deinit` — when the identity's session has actually disappeared (app quit, or stopped
-    /// producing audio past the grace period), not merely because volume/mute returned to
-    /// natural. See `livePipelines`'s doc comment for why "natural volume" alone must never tear
-    /// a pipeline down.
     @available(macOS 14.4, *)
     private func tearDownPipelinesForRemovedSessions(stillPresent: Set<String>) {
         let removedIdentities = livePipelines.keys.filter { !stillPresent.contains($0) }
@@ -289,8 +213,6 @@ public final class CoreAudioSessionService: AudioSessionProviding {
             logger.info("\(identity, privacy: .public): session ended, live pipeline torn down")
         }
     }
-
-    // MARK: - Control (FR-003/FR-004)
 
     public func setVolume(_ volume: Double, forBundleIdentifier id: String) {
         mutateControllableSession(id: id, operation: "setVolume(\(volume), \(id))") { session in
@@ -310,9 +232,6 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         }
     }
 
-    /// Shared shape for every control-mutation entry point (spec 004 FR-004): find the session by
-    /// identity, guard it's controllable (else log and stop), mutate it, run the
-    /// operation-specific side effect (persistence + real pipeline), then republish.
     private func mutateControllableSession(
         id: String,
         operation: String,
@@ -335,10 +254,6 @@ public final class CoreAudioSessionService: AudioSessionProviding {
         sessionsSubject.value = current
     }
 
-    /// Routes an app's audio through our own live pipeline whenever it needs anything other than
-    /// its natural, unmodified volume — silence if muted, `volume`-scaled samples otherwise. Once
-    /// created for an identity, the pipeline is kept running indefinitely (see `livePipelines`'s
-    /// doc comment) — it is never torn down here just because volume/mute returned to natural.
     private func applyControl(volume: Double, isMuted: Bool, forIdentity identity: String) {
         guard #available(macOS 14.4, *) else { return }
 

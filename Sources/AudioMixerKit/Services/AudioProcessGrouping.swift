@@ -1,12 +1,8 @@
 import Foundation
 
-/// One audio-producing process as reported by the real Core Audio backend, before grouping.
 public struct RawAudioProcess {
-    /// The Core Audio object ID for this process — needed to build a real tap (see
-    /// `CoreAudioSessionService`). `0` for processes that only exist in tests/fakes.
     public let processObjectID: UInt32
     public let processID: Int32
-    /// `nil` when Core Audio can't resolve an owning application bundle for this process.
     public let bundleIdentifier: String?
     public let processName: String
     public let displayName: String?
@@ -26,20 +22,11 @@ public struct RawAudioProcess {
     }
 }
 
-/// Groups raw per-process audio info into one `ControllableAudioSession` per application
-/// (FR-002). Processes with no resolvable bundle identifier fall back to a synthetic session
-/// keyed by process name, shown as an uncontrollable row rather than excluded (FR-011, spec
-/// Assumptions) — this satisfies SC-004's "every audio-producing app appears" guarantee.
 public enum AudioProcessGrouping {
-    /// The identity key a process groups under: its bundle identifier, or a synthetic
-    /// process-name-keyed identity when none is resolvable. Shared with `CoreAudioSessionService`
-    /// so it can map the same identity back to real Core Audio process object IDs.
     public static func identity(for process: RawAudioProcess) -> String {
         process.bundleIdentifier ?? syntheticIdentity(forProcessName: process.processName)
     }
 
-    /// - Parameter existing: Previously known sessions, keyed by identity, so volume/mute state
-    ///   already in progress isn't reset when the same application is regrouped.
     public static func group(
         processes: [RawAudioProcess],
         existing: [String: ControllableAudioSession] = [:]
@@ -54,10 +41,6 @@ public enum AudioProcessGrouping {
             let displayName = representative.displayName ?? representative.processName
             if var known = existing[identity] {
                 known.lastSeenAt = Date()
-                // Refresh every poll rather than only on first sighting — self-correcting if the
-                // owning app wasn't fully resolvable yet the first time this identity was seen
-                // (e.g. still launching), instead of getting permanently stuck with the earlier,
-                // less-friendly resolution (a real bug this replaces — see tasks.md T057).
                 known.displayName = displayName
                 return known
             }
@@ -68,10 +51,6 @@ public enum AudioProcessGrouping {
             )
         }
 
-        // Dictionary iteration order is not stable across calls — without sorting, the popover's
-        // row order would visibly shuffle on every poll cycle even when nothing changed.
-        // ControllableAudioSession's Comparable conformance is the single source of truth for
-        // row order (see its doc comment).
         return sessions.sorted()
     }
 

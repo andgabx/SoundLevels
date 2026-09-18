@@ -1,7 +1,5 @@
 import Combine
 
-/// Coordinates the popover/session-list: permission gating, the visible session list, and one
-/// `AppVolumeViewModel` per listed application (Constitution Principles I & II).
 public final class MixerViewModel: ObservableObject {
     public enum SessionListState: Equatable {
         case permissionRequired
@@ -11,9 +9,6 @@ public final class MixerViewModel: ObservableObject {
 
     @Published public private(set) var permissionState: PermissionState = .notDetermined
     @Published public private(set) var rowViewModels: [AppVolumeViewModel] = []
-    // Both provider publishers are CurrentValueSubjects that replay synchronously on subscribe,
-    // so `recompute()` always runs before `init` returns — there is no separate "loading" moment
-    // any external observer could ever see. `.empty` is just a harmless initial value.
     @Published public private(set) var listState: SessionListState = .empty
 
     private let provider: AudioSessionProviding
@@ -43,13 +38,6 @@ public final class MixerViewModel: ObservableObject {
         provider.requestPermission()
     }
 
-    /// Rebuilds `rowViewModels` from the latest known state, reusing existing `AppVolumeViewModel`
-    /// instances for bundle identifiers still present (US3, FR-005) so an in-flight slider drag
-    /// isn't reset, and dropping ones no longer present. Each `AppVolumeViewModel` updates its own
-    /// content independently (T040 — it subscribes to `provider.sessions` itself), so this method
-    /// only decides which instances should exist, never pushes content into them. While permission
-    /// is `.denied`, sessions are never read (contract expectation #1) — the list is cleared and
-    /// `.permissionRequired` is exposed instead (FR-010).
     private func recompute() {
         guard permissionState != .denied else {
             rowViewModels = []

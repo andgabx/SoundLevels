@@ -1,8 +1,5 @@
 import SwiftUI
 
-/// Renders the menu bar popover: the session list, the empty state (FR-006), or
-/// `PermissionRequiredView` (FR-010) — driven entirely by `MixerViewModel`, no logic of its own
-/// (Constitution I).
 public struct MixerPopoverView: View {
     @ObservedObject var viewModel: MixerViewModel
     let onOpenSystemSettings: () -> Void

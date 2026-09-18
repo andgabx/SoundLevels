@@ -39,6 +39,19 @@ On first launch, macOS will ask for permission to record system audio — this i
 underlying Core Audio Process Tap API to discover and control per-app volume, and is what powers
 the whole feature.
 
+### Building a real, iconed `.app`
+
+`swift run` launches a raw executable with no `.app` bundle, so no custom icon shows in Finder.
+To produce a real, double-clickable, custom-iconed, ad-hoc signed `SoundLevels.app`:
+
+```bash
+./Scripts/build-app-bundle.sh
+```
+
+This builds a release binary, renders `Scripts/AppIcon.svg` into the `.icns` icon, assembles
+`SoundLevels.app` at the repo root, and ad-hoc signs it. Safe to re-run any time — each run starts
+from a clean slate.
+
 ## How it works
 
 Built on the public [Core Audio Process Tap API](https://developer.apple.com/documentation/coreaudio)

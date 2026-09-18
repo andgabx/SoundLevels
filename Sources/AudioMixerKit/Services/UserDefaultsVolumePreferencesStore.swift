@@ -1,17 +1,10 @@
 import Foundation
 
-/// The durable counterpart to `ControllableAudioSession` — see
-/// specs/002-volume-persistence/data-model.md.
 struct PersistedVolumeSetting: Codable {
     var volume: Double
     var isMuted: Bool
 }
 
-/// `UserDefaults`-backed implementation of `VolumePreferencesProviding` (research.md §1/§2).
-/// Stores one JSON-encoded `[String: PersistedVolumeSetting]` dictionary under a single key,
-/// decoded once and cached in-memory, re-encoded and written on every change. No debounce —
-/// this is small-dictionary work, not a HAL round-trip (research.md §2 explains why that
-/// distinction matters here).
 public final class UserDefaultsVolumePreferencesStore: VolumePreferencesProviding {
     static let storageKey = "com.andersongabriel.SoundLevels.persistedVolumeSettings"
 

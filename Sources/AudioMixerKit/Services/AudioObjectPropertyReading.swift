@@ -1,7 +1,5 @@
 import CoreAudio
 
-/// Small, generic `AudioObjectGetPropertyData` readers shared by `AudioProcessDiscovery` and
-/// `LiveVolumePipeline` — kept separate since neither owns the other.
 enum AudioObjectPropertyReading {
     static func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
         AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)

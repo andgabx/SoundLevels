@@ -6,10 +6,6 @@ import Darwin
 import AppKit
 #endif
 
-/// Discovers audio-producing processes via Core Audio and resolves each one back to a real
-/// application (name, icon, bundle identifier) — the read-only, stateless half of talking to
-/// Core Audio. Kept separate from `LiveVolumePipeline` (the stateful, write side) and from
-/// `CoreAudioSessionService` (the orchestrator that owns polling/caching state).
 enum AudioProcessDiscovery {
     static func fetchAudioProcesses() -> [RawAudioProcess] {
         var address = AudioObjectPropertyReading.address(kAudioHardwarePropertyProcessObjectList)
@@ -29,16 +25,8 @@ enum AudioProcessDiscovery {
         return processIDs.compactMap { processObjectID -> RawAudioProcess? in
             guard AudioObjectPropertyReading.boolProperty(processObjectID, kAudioProcessPropertyIsRunningOutput) else { return nil }
             let pid = AudioObjectPropertyReading.pidProperty(processObjectID, kAudioProcessPropertyPID)
-            // SoundLevels's own live control pipelines run real output IO (that's what makes
-            // mute/volume audible), which makes Core Audio report SoundLevels itself as "currently
-            // producing audio" — confirmed via manual testing (it showed up as its own row).
-            // Never list ourselves.
             guard pid != ownPID else { return nil }
             let rawBundleID = AudioObjectPropertyReading.stringProperty(processObjectID, kAudioProcessPropertyBundleID)
-            // Multi-process apps (e.g. Chrome) report a DIFFERENT bundle ID per helper process
-            // (confirmed via manual testing: "Google Chrome Helper" showed up as its own row,
-            // separate from Chrome). Attribute it back to the owning application so FR-002's
-            // "one row per app" grouping holds for these helpers too.
             let ownerBundleID = Self.ownerApplicationBundleIdentifier(forPID: pid) ?? rawBundleID
             let displayName = ownerBundleID.flatMap(Self.applicationName(forBundleIdentifier:))
                 ?? Self.friendlyFallbackName(fromBundleIdentifier: rawBundleID, processID: pid)
@@ -52,9 +40,6 @@ enum AudioProcessDiscovery {
         }
     }
 
-    /// Attempts a real, immediately-destroyed tap on the given processes — the closest available
-    /// signal to "is this actually tappable" (FR-011), since Core Audio has no direct query
-    /// property for it.
     @available(macOS 14.4, *)
     static func probeTappability(_ objectIDs: [AudioObjectID]) -> Bool {
         guard !objectIDs.isEmpty else { return false }
@@ -66,42 +51,23 @@ enum AudioProcessDiscovery {
         return true
     }
 
-    /// A readable fallback when no app bundle can be resolved at all (e.g. system helper
-    /// processes like `com.apple.WebKit.GPU`) — the last one or two bundle ID components read
-    /// better than the raw reverse-DNS string. Pure/testable — see AudioProcessDiscoveryTests.
     static func friendlyFallbackName(fromBundleIdentifier bundleID: String?, processID: pid_t) -> String {
         guard let bundleID, !bundleID.isEmpty else { return "pid:\(processID)" }
         let tail = bundleID.split(separator: ".").suffix(2).joined(separator: " ")
         return tail.isEmpty ? bundleID : tail
     }
 
-    /// Finds the outermost `.app` bundle containing the given executable path — the FIRST
-    /// ".app/" is correct even when a helper's own nested `.app` lives inside it (e.g.
-    /// "Google Chrome.app/.../Google Chrome Helper.app/..."). Pure string logic, separated from
-    /// the `proc_pidpath` syscall in `enclosingAppBundleIdentifier` specifically so it's
-    /// unit-testable — see AudioProcessDiscoveryTests. This exact logic caused two real bugs
-    /// (Chrome Helper split into its own row; WebKit GPU unattributed) before being fixed.
     static func appBundlePath(fromExecutablePath path: String) -> String? {
         guard let appMarkerRange = path.range(of: ".app/") else { return nil }
         return String(path[path.startIndex..<appMarkerRange.upperBound].dropLast())
     }
 
     #if canImport(AppKit)
-    /// Finds the application that "owns" a process, so multi-process apps group under one row
-    /// (FR-002) instead of one row per helper.
     private static func ownerApplicationBundleIdentifier(forPID pid: pid_t) -> String? {
-        // Primary strategy: find the .app bundle that physically contains the process's
-        // executable on disk (e.g. Chrome's helpers live inside Google Chrome.app). This works
-        // regardless of how the process was launched (fork/exec, like Chrome, or an XPC service
-        // launched by launchd, like some system helpers) as long as it lives inside a real .app.
         if let bundleID = Self.enclosingAppBundleIdentifier(forPID: pid) {
             return bundleID
         }
 
-        // Fallback: walk the process tree. Doesn't help XPC services launched directly by
-        // launchd (their parent is launchd, not the requesting app) — confirmed via manual
-        // testing with Safari's WebKit GPU process, a shared framework-level XPC service with no
-        // enclosing .app of its own, which correctly stays its own row rather than being guessed.
         let runningApps = NSWorkspace.shared.runningApplications
         var currentPID = pid
         var visited = Set<pid_t>()
@@ -140,11 +106,6 @@ enum AudioProcessDiscovery {
     #endif
 
     #if canImport(AppKit)
-    // Both caches are keyed by bundle identifier, not pid — an app's resolved name/icon is stable
-    // for as long as it's installed, so there's no pid-reuse staleness risk here (unlike caching
-    // by pid would have). Never invalidated within a session: re-resolving on every 1-second poll
-    // tick for every already-known app was confirmed (via code audit) to be real, measurable,
-    // avoidable NSWorkspace/LaunchServices work — see tasks.md T057.
     private static var applicationNameCache: [String: String] = [:]
     private static var applicationIconCache: [String: NSImage] = [:]
 
@@ -156,9 +117,6 @@ enum AudioProcessDiscovery {
         return name
     }
 
-    /// FR-002: the icon shown per row. `nil` falls back to the generic placeholder (Edge Cases).
-    /// Called from the View layer (`AppVolumeRowView`), not stored on the Model/ViewModel
-    /// (Constitution I) — the cache above is what keeps repeated calls cheap.
     static func applicationIcon(forBundleIdentifier bundleID: String) -> NSImage? {
         if let cached = applicationIconCache[bundleID] { return cached }
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }

@@ -21,3 +21,8 @@ DerivedData/
 *.dSYM.zip
 *.ipa
 *.profraw
+
+# App bundle packaging (Scripts/build-app-bundle.sh) — build-time output, not source
+/SoundLevels.app
+Scripts/AppIcon.iconset/
+Scripts/AppIcon.icns

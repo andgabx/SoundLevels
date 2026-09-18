@@ -1,15 +1,11 @@
 import Combine
 import AudioMixerKit
 
-/// Script-driven, in-memory test double for `AudioSessionProviding` so ViewModel tests can
-/// simulate any permission state or session-list change without real hardware.
-/// See specs/001-per-app-volume-mixer/contracts/audio-session-providing.md.
 final class FakeAudioSessionProvider: AudioSessionProviding {
     private let permissionSubject: CurrentValueSubject<PermissionState, Never>
     private let sessionsSubject: CurrentValueSubject<[ControllableAudioSession], Never>
 
     private(set) var requestPermissionCallCount = 0
-    /// Records every setVolume/setMuted call so tests can assert cross-session isolation (FR-007).
     private(set) var recordedCalls: [(bundleIdentifier: String, kind: String, value: Double)] = []
 
     init(
@@ -49,8 +45,6 @@ final class FakeAudioSessionProvider: AudioSessionProviding {
         current[index].setMuted(isMuted)
         sessionsSubject.value = current
     }
-
-    // MARK: - Test helpers (simulate external changes)
 
     func simulatePermissionChange(_ state: PermissionState) {
         permissionSubject.value = state
