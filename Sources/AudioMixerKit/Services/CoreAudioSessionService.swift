@@ -143,9 +143,10 @@ public final class CoreAudioSessionService: AudioSessionProviding {
                       initialMuted: muted
                   )
             else {
-                logger.error("\(identity, privacy: .public): couldn't rebuild live pipeline after output device change")
+                logger.error("\(identity, privacy: .public): couldn't rebuild live pipeline after output device change (objectIDs.isEmpty=\(objectIDs.isEmpty))")
                 continue
             }
+            logger.info("\(identity, privacy: .public): live pipeline rebuilt after output device change (new tap \(rebuilt.tapID), aggregate \(rebuilt.aggregateDeviceID))")
             livePipelines[identity] = rebuilt
         }
     }

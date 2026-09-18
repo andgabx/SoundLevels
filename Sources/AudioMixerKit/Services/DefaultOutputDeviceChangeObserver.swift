@@ -32,6 +32,7 @@ final class DefaultOutputDeviceChangeObserver {
         // firing (spec 004 FR-005; resolves regression-safety.md CHK001/CHK009).
         let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
             DispatchQueue.main.async {
+                self?.logger.info("kAudioHardwarePropertyDefaultOutputDevice fired — device itself changed")
                 self?.resubscribeToCurrentDeviceSampleRate()
                 self?.onChange()
             }
@@ -67,6 +68,7 @@ final class DefaultOutputDeviceChangeObserver {
         var address = AudioObjectPropertyReading.address(kAudioDevicePropertyNominalSampleRate)
         let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
             DispatchQueue.main.async {
+                self?.logger.info("kAudioDevicePropertyNominalSampleRate fired for the current output device (id \(deviceID))")
                 self?.onChange()
             }
         }
