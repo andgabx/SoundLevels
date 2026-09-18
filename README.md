@@ -1,7 +1,13 @@
-# SoundLevels
+<p align="center">
+  <img src="docs/logo.png" width="128" height="128" alt="SoundLevels logo">
+</p>
 
-A per-application volume mixer for the macOS menu bar — the Windows-style "one slider per app"
-mixer macOS has never shipped natively.
+<h1 align="center">SoundLevels</h1>
+
+<p align="center">
+  A per-application volume mixer for the macOS menu bar — the Windows-style "one slider per app"
+  mixer macOS has never shipped natively.
+</p>
 
 Click the menu bar icon to see every application currently playing audio, each with its own
 volume slider and mute toggle, without touching the system-wide volume or any other app.
@@ -73,7 +79,6 @@ under one row.
 
 ## Current limitations
 
-- Per-app volume/mute state resets when the app relaunches — no persistence across sessions yet.
 - No keyboard shortcuts or launch-at-login yet.
 - Tested on Intel; not yet verified on Apple Silicon hardware.
 
@@ -83,6 +88,14 @@ MVVM throughout, with Core Audio access isolated behind a protocol
 (`AudioSessionProviding`) so the ViewModel/Model layer is fully unit-tested without needing real
 audio hardware. See `Sources/AudioMixerKit/` for the business logic and `Tests/` for its test
 suite.
+
+## Feedback & bugs
+
+This is a personal project built while learning Swift, SwiftUI, and Core Audio — it's very much a
+work in progress, and I'm still learning as I go. If you download it and hit a bug, a crash, or
+something that just feels wrong, please [open an issue](https://github.com/andgabx/SoundLevels/issues) —
+real reports from real machines (especially Apple Silicon, which I haven't personally tested on)
+are genuinely valuable and appreciated.
 
 ## License
 
