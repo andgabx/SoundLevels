@@ -22,8 +22,8 @@ struct AppVolumeRowView: View {
                 .buttonStyle(.borderless)
                 .disabled(!viewModel.isControllable)
                 .accessibilityLabel(viewModel.isMuted
-                    ? Text("Unmute", bundle: .module)
-                    : Text("Mute", bundle: .module))
+                    ? Text("Unmute")
+                    : Text("Mute"))
                 .accessibilityHint(disabledHint)
             }
             Slider(
@@ -39,7 +39,7 @@ struct AppVolumeRowView: View {
             .accessibilityHint(disabledHint)
 
             if !viewModel.isControllable {
-                Text("SoundLevels can't control this app's volume individually.", bundle: .module)
+                Text("SoundLevels can't control this app's volume individually.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -56,7 +56,7 @@ struct AppVolumeRowView: View {
     private var disabledHint: Text {
         viewModel.isControllable
             ? Text(verbatim: "")
-            : Text("SoundLevels can't control this app's volume individually.", bundle: .module)
+            : Text("SoundLevels can't control this app's volume individually.")
     }
 
     @ViewBuilder

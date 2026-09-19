@@ -19,14 +19,9 @@ fi
 
 RELEASE_DIR="$REPO_ROOT/.build/release"
 BINARY_PATH="$RELEASE_DIR/$APP_NAME"
-RESOURCE_BUNDLE="$RELEASE_DIR/${APP_NAME}_AudioMixerKit.bundle"
 
 if [ ! -x "$BINARY_PATH" ]; then
     echo "error: release binary not found at $BINARY_PATH" >&2
-    exit 1
-fi
-if [ ! -d "$RESOURCE_BUNDLE" ]; then
-    echo "error: AudioMixerKit resource bundle not found at $RESOURCE_BUNDLE" >&2
     exit 1
 fi
 
@@ -48,7 +43,6 @@ echo "==> Assembling $APP_NAME.app..."
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 cp "$BINARY_PATH" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 cp "$ICNS_PATH" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
-cp -R "$RESOURCE_BUNDLE" "$APP_BUNDLE/Contents/Resources/"
 cp "$REPO_ROOT/Sources/SoundLevels/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 
 echo "==> Ad-hoc signing..."

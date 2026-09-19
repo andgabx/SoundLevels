@@ -20,7 +20,7 @@ public struct MixerPopoverView: View {
                         .font(.system(size: 24))
                         .foregroundStyle(.secondary)
                         .accessibilityHidden(true)
-                    Text("No apps are currently playing audio", bundle: .module)
+                    Text("No apps are currently playing audio")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
